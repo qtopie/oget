@@ -14,7 +14,10 @@ import (
 )
 
 // RangeSize is the default range size to 1MB
-const RangeSize int64 = 1024 * 1024
+const (
+	RangeSize    int64 = 1024 * 1024
+	ThreadAmount int   = 32
+)
 
 // RangeHeader defines the part of file to download.
 type RangeHeader struct {
@@ -33,7 +36,6 @@ type Fetcher struct {
 	Pieces   []RangeHeader
 	// TO-DO Use interface, maybe io.WriterCloser
 	FileHandler *os.File
-	BlockSize   int64
 }
 
 // retrieveAll downloads the file completely.
@@ -62,9 +64,7 @@ func (f *Fetcher) retrievePartial(pieceN int) (err error) {
 	}
 	req.Header.Set("Range", s.String())
 
-	client := &http.Client{
-		Timeout: time.Second * 5,
-	}
+	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return
@@ -105,11 +105,11 @@ func (f *Fetcher) Download() {
 	switch resp.StatusCode {
 	case http.StatusPartialContent:
 		rangeSatisfiable = true
-		log.Println("Support for range request.")
+		log.Println("Partial Content is supported.")
 	case http.StatusOK, http.StatusRequestedRangeNotSatisfiable:
-		log.Println(f.URL, "not support for partial content.")
+		log.Println(f.URL, "does not support for range request.")
 	default:
-		log.Println("Exception")
+		log.Fatal("Got unexpected status code", resp.StatusCode)
 		return
 	}
 
@@ -122,9 +122,10 @@ func (f *Fetcher) Download() {
 		}
 
 		var pieces []RangeHeader
-		amount := int(int64(length)/RangeSize) + 1
-		if int64(length)%RangeSize == 0 {
-			amount--
+		rangeSize := splitSize(int64(length))
+		amount := int(int64(length) / rangeSize)
+		if int64(length)%rangeSize != 0 {
+			amount = amount + 1
 		}
 
 		for i := 0; i < amount; i++ {
@@ -167,4 +168,18 @@ func (f *Fetcher) Download() {
 		}
 	}
 
+}
+
+func splitSize(length int64) (size int64) {
+	// less than 1KB
+	if length <= 1024 {
+		return 1024
+	}
+
+	size = length / int64(ThreadAmount)
+	if length%32 != 0 {
+		size = size + 1
+	}
+
+	return
 }
