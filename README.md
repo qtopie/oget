@@ -1,33 +1,28 @@
 # oget
 
-## Usage
-* Basic usage
-``` bash
-oget http://example.com/sample_file.txt
+Simple non-interactive network downloader.
+
+[![Build Status](https://travis-ci.org/artificerpi/oget.svg?branch=develop)](https://travis-ci.org/artificerpi/oget)
+
+## Installation
+Install [golang](https://golang.org/doc/install), then run following command:
+```
+go get -u github.com/artificerpi/oget
 ```
 
-* oget -h
+## Usage
+
+* Basic usage
+``` bash
+oget http://example.com/samplefile.txt
+```
+
+* Manual page: `oget -h`
 ```
 Usage of oget:
   -file string
-        filename to download
+    	name or path to save file
 ```
 
-
-## TODO
-add a storage when downloading large files.
-
-
-io.Seeker
-
-## HTTP 206 
-## Content Length
-## Accept ranges (default used bytes)
-https://tools.ietf.org/html/rfc7233#section-2.3
-
-## TO-DO
-- [ ] Just download a file   
-- [ ] Build a CLI tool
-- [ ] splitter support
-- [ ] Proxy support
-- [ ] Continue support
+## License
+This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details
