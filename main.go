@@ -7,13 +7,12 @@ import (
 	"os"
 )
 
-var (
-	cmd Command
-)
-
 func main() {
+	var cmd Command
+
 	flag.StringVar(&cmd.FileName, "file", "", "name or path to save file")
 	flag.Parse()
+
 	args := flag.Args()
 	if len(args) != 1 {
 		fmt.Fprintf(os.Stderr, "%s: invalid URL %s to download from\n", os.Args[0], args)

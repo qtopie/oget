@@ -15,6 +15,6 @@ func parseFileName(url string) string {
 }
 
 // validate check wether the url is valid
-func validate(url string) bool {
+func validateURL(url string) bool {
 	return true
 }

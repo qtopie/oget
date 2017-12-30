@@ -127,27 +127,3 @@ func TestFetcher_retrievePartial(t *testing.T) {
 		t.Errorf("Expected to be %s but instead got %s", wanted, actual)
 	}
 }
-
-func TestFetcher_Download(t *testing.T) {
-	type fields struct {
-		URL      string
-		FileName string
-		Pieces   []RangeHeader
-	}
-	tests := []struct {
-		name   string
-		fields fields
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			f := &Fetcher{
-				URL:      tt.fields.URL,
-				FileName: tt.fields.FileName,
-				Pieces:   tt.fields.Pieces,
-			}
-			f.Download()
-		})
-	}
-}

@@ -1,38 +1,30 @@
 package main
 
-import (
-	"log"
-	"os"
-)
+import "log"
 
+// Command stores the command line options and arguments
 type Command struct {
 	URL      string
 	FileName string
 }
 
+// execute runs this command
 func (cmd *Command) execute() {
-	if !validate(cmd.URL) {
-		log.Fatal(cmd.URL, " is invalid or not supported")
+	if !cmd.validate() {
+		log.Println("Invalid command")
 		return
 	}
 
-	fileName := parseFileName(cmd.URL)
-	log.Println("Downloading file", cmd.URL, fileName)
+	w := &Work{}
+	w.parse(*cmd)
 
-	file, err := os.Create(fileName)
-	if err != nil {
-		log.Fatal(err)
+	w.run()
+}
+
+func (cmd *Command) validate() bool {
+	if !validateURL(cmd.URL) {
+		log.Fatal(cmd.URL, " is invalid or not supported")
+		return false
 	}
-	defer file.Close()
-
-	fetcher := &Fetcher{
-		URL:         cmd.URL,
-		FileName:    fileName,
-		FileHandler: file,
-	}
-
-	fetcher.Download()
-
-	log.Println("Downloaded file", cmd.URL, "to", fileName)
-
+	return true
 }
