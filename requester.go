@@ -23,8 +23,9 @@ const (
 type Work struct {
 	FetcherHandler Fetcher // multiple
 	State          StateCode
-	FileName       string
-	Length         int
+	FileName       string // TODO remove?
+	Length         int64
+	FileHandler    *os.File
 }
 
 func (w *Work) parse(cmd Command) {
@@ -42,11 +43,10 @@ func (w *Work) parse(cmd Command) {
 		log.Fatal(err)
 	}
 	// defer file.Close()
+	w.FileHandler = file
 
 	w.FetcherHandler = Fetcher{
-		URL:         cmd.URL,
-		FileName:    w.FileName,
-		FileHandler: file,
+		URL: cmd.URL,
 	}
 
 	if length > 0 {
@@ -83,7 +83,7 @@ func (w *Work) run() {
 	if w.Length == 0 {
 		// download directly
 		if w.Length == 0 {
-			err := w.FetcherHandler.retrieveAll()
+			_, err := w.FetcherHandler.retrieveAll(w.FileHandler)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -99,7 +99,7 @@ func (w *Work) run() {
 		log.Println("downloading", i)
 		go func(pieceN int) {
 			defer wg.Done()
-			err := w.FetcherHandler.retrievePartial(pieceN)
+			_, err := w.FetcherHandler.retrievePartial(pieceN, w.FileHandler)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -120,9 +120,9 @@ func (w *Work) resume() {
 
 func (w *Work) finish() {
 	// checkfile completes
-	if fi, _ := w.FetcherHandler.FileHandler.Stat(); int64(w.Length) != fi.Size() {
-		log.Fatalf("Downloaded file is not completed, remote: %v, local: %v", w.Length, fi.Size())
-	}
+	// if fi, _ := w.FetcherHandler.FileHandler.Stat(); int64(w.Length) != fi.Size() {
+	// 	log.Fatalf("Downloaded file is not completed, remote: %v, local: %v", w.Length, fi.Size())
+	// }
 
 	log.Println("Downloaded file to", w.FileName)
 
@@ -136,7 +136,7 @@ func (w *Work) monitor() {
 // probe makes am HTTP request to the site and return site infomation.
 // If site is not reachable, return non-nil error.
 // If site supports for range request, return the file length (should be greater than 0).
-func probe(url string) (length int, err error) {
+func probe(url string) (length int64, err error) {
 	// Check whether site is reachable
 	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
@@ -162,7 +162,7 @@ func probe(url string) (length int, err error) {
 		log.Println("Break-point is supported in this downloading task.")
 
 		attr := resp.Header.Get("Content-Length")
-		length, err = strconv.Atoi(attr)
+		length, err = strconv.ParseInt(attr, 10, 0)
 		if err != nil {
 			log.Fatal(err)
 		}

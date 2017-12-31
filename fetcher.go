@@ -6,10 +6,9 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
 )
 
-// RangeSize is the default range size to 1MB
+// RangeSize sets the default range size to 1MB
 const (
 	RangeSize    int64 = 1024 * 1024
 	ThreadAmount int   = 32
@@ -27,33 +26,29 @@ func (h *RangeHeader) String() string {
 
 // Fetcher downloads file from URL.
 type Fetcher struct {
-	URL      string
-	FileName string
-	Pieces   []RangeHeader
-	// TO-DO Use interface, maybe io.WriterCloser
-	FileHandler *os.File
+	URL    string
+	Pieces []RangeHeader
 }
 
 // retrieveAll downloads the file completely.
-func (f *Fetcher) retrieveAll() (err error) {
-
+func (f *Fetcher) retrieveAll(w io.Writer) (int64, error) {
 	resp, err := http.Get(f.URL)
 	if err != nil {
-		return
+		return 0, err
 	}
 
-	_, err = io.Copy(f.FileHandler, resp.Body)
-
-	return
+	n, err := io.Copy(w, resp.Body)
+	return n, err
 }
 
 // retrievePartial downloads part of the file.
-func (f *Fetcher) retrievePartial(pieceN int) (err error) {
+func (f *Fetcher) retrievePartial(pieceN int, w io.WriterAt) (n int, err error) {
 	if pieceN < 0 || pieceN >= len(f.Pieces) {
-		return errors.New("Unspported index")
+		return 0, errors.New("Unspported index")
 	}
 	s := f.Pieces[pieceN]
 
+	// make HTTP Range request to get file from server
 	req, err := http.NewRequest(http.MethodGet, f.URL, nil)
 	if err != nil {
 		return
@@ -67,16 +62,13 @@ func (f *Fetcher) retrievePartial(pieceN int) (err error) {
 	}
 	defer resp.Body.Close()
 
+	// read data from response and write it
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}
 
-	//just write to file
-	n, err := f.FileHandler.WriteAt(data, int64(s.StartPos))
-	if err == nil && n != len(data) {
-		err = errors.New("Downloading is not complete")
-	}
+	n, err = w.WriteAt(data, s.StartPos)
 	return
 }
 

@@ -34,7 +34,7 @@ func Test_probe(t *testing.T) {
 	tests := []struct {
 		name       string
 		args       args
-		wantLength int
+		wantLength int64
 		wantErr    bool
 	}{
 		{"SingleServer", args{url: singleServer.URL}, 0, false},
