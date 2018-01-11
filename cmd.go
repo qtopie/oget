@@ -23,7 +23,7 @@ func (cmd *Command) execute() {
 
 func (cmd *Command) validate() bool {
 	if !validateURL(cmd.URL) {
-		log.Fatal(cmd.URL, " is invalid or not supported")
+		log.Fatal("URL", cmd.URL, " is invalid or not supported")
 		return false
 	}
 	return true

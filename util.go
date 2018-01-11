@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"net/url"
 )
 
 func parseFileName(url string) string {
@@ -15,6 +16,10 @@ func parseFileName(url string) string {
 }
 
 // validate check wether the url is valid
-func validateURL(url string) bool {
+func validateURL(uri string) bool {
+	_, err := url.ParseRequestURI(uri)
+	if err != nil {
+		return false
+	}
 	return true
 }

@@ -101,7 +101,7 @@ func (w *Work) run() {
 			defer wg.Done()
 			_, err := w.FetcherHandler.retrievePartial(pieceN, w.FileHandler)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal("Error in downloading piece ", pieceN, err)
 			}
 		}(i)
 	}

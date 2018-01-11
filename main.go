@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 )
 
@@ -22,7 +21,6 @@ func main() {
 	}
 
 	cmd.URL = args[0]
-	log.Println("cmd.URL", cmd.URL)
 
 	cmd.execute()
 }
