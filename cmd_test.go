@@ -11,7 +11,7 @@ func TestCommand_execute(t *testing.T) {
 		name   string
 		fields fields
 	}{
-		{"real_test", fields{"http://ftp.uninett.no/linux/ubuntu-iso/artful/ubuntu-17.10-desktop-amd64.iso", "test"}},
+		{"real_test", fields{"http://archive.ubuntu.com/ubuntu/dists/xenial/main/installer-amd64/current/images/netboot/mini.iso", "test"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
