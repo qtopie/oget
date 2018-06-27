@@ -2,33 +2,29 @@ language: go
 sudo: false
 matrix:
   include:
-    - go: 1.x
-      env: LATEST=true
-    - go: tip
+  - go: 1.x
+    env: LATEST=true
+  - go: tip
   allow_failures:
-    - go: tip
-
+  - go: tip
 before_install:
-  - go get github.com/mitchellh/gox
-
+- go get github.com/mitchellh/gox
 install:
-  - # skip
-
+- 
 script:
-  - go get -t -v ./...
-  # Only build binaries from the latest Go release.
-  - if [ "${LATEST}" = "true" ]; then gox -os="linux darwin windows" -arch="amd64" -verbose ./...; fi
-
+- go get -t -v ./...
+- if [ "${LATEST}" = "true" ]; then gox -os="linux darwin windows" -arch="amd64" -verbose
+  ./...; fi
 deploy:
   provider: releases
-  api_key:
-    secure: "l49QBKVUUyiXGyFWrYlPDSmwmlADzwIRDwNv/HncmdklNmXkSzyXrdvKpIzQdqZU84MtD5HJQJidTdY11Chvvs5X2hqWPSP4CJrzj6FLEljPd4qlSDnGgpFtGtlCWpVbPAR8OLDRW3yDu+dKxALKhVevvf2WHwzsXZregk/K/xieKlxjdm/ykwXJ2WpATSTfsoAHzShH7W4fWD89fkzLGTneA6ZHHPRfi0m9eGIDn0ZtELzeFRfN47t1ZRQ5wjzXjklDk4DpFMlmQrbO4p/EBT2vdmt1ICk3mVwHLGwdEym/U/95EIoraZV1T8XnD8puhgqbHNeylFZerwNIcczUMaMFaBHtuNrK+Z2SUp8EXEDac35xWp9Topq3Z7GG/Dlsv2ym8RwyzzvDVSbowh7am0D6XvVUM84Dkq4cJLFJc61fBB4BhUjQZp0snvhbODDWHLPmt7n36rx6AgYHix0RnJ/Af7nPoW7FmVfE8vkADIXqHjOp3sm1t/HouzqK+CN1Hq/0DsR0q74Ks6yXVlnY34bTDO9t5PBlC+hILWqRjGsqizno0/YfjPqPLU1x6r93BarbrZfuy4mPcDnQF9MIJb7DsRBQ4a+0J42ybZoFZYVjRoeb2zBDyBIYM68SuJ7g+9OutnyHuxE0ZVfotXGsAVuCTUo0YXo4vurUoBpdb28="
   file:
-    - oget_windows_amd64.exe
-    - oget_linux_amd64
-    - oget_darwin_amd64
+  - oget_windows_amd64.exe
+  - oget_linux_amd64
+  - oget_darwin_amd64
   skip_cleanup: true
   on:
     repo: artificerpi/oget
     tags: true
-    condition: $LATEST = true
+    condition: "$LATEST = true"
+  api-key:
+    secure: ZkIIreVXBRdBNeC2eIyqJJ13vXxguXfQFSvbn3iyDsRmGIcplPGfjUpaZoNNWp05YnbVDmLwRR/OjoZV1AmlOshzD8I6Z21NMYGQZ/UqjGhMwHJYNfd2FpGUFTJToNfxtoem+Cdnp9CQLOlRYKnjJpgXRFZ74YXGaDrCeklXrFpXfY4vNKV4heW98KeVSGmn6sLu8s2X/9ELa7+0zOEE9nVnEVlDxLLVOiBfdPp8W/GHrr0NINyLUFGRHJvyRRPuwUfQqGej8btgDxpWs0cPrKhWtSI9XA6gNIfnlhp0lqjBslzR49tnbzN2MLAG5pYBgMqV223BihaJeL2YHlur+IXQ+4JV4uX1Iv7ZwjQMqyj68H+vRXVkg6GCsyL19eXBKnUAqoDmsZJKDLZakpADVJYbLCbIX8ALRFoXKlSNE2GYFVeJFp0RSstkaamtxxgSRYmWPXheaknnSO81fkJanmT9TG6ehRQeh7DyiVYoggsIq8hvLYokaAuhW/FSWHT5qncrs3MphzX1/ehz1vGWaqEH9E6fN1OLJ0tQWu91pOCKNnntNd0+gA2yTuORxIKLT9Fi26LvV82Fxxyzp2nFPC5yNzW2ShnwIOkp0KSk6NRKupqEJfbOn1sIcJl2FPoicg4RR2rt5pCbLpshjP6MhtXtfw7Mr/SLeLUAW9A6Nj4=
