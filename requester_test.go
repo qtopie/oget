@@ -1,32 +1,17 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"net/http/httputil"
 	"testing"
-	"time"
+
+	"github.com/artificerpi/oget/ogettest"
 )
 
 func Test_probe(t *testing.T) {
-	webContent := "Hello World!"
-	singleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, webContent)
-	}))
-	defer singleServer.Close()
+	simpleServer := ogettest.NewSimpleServer()
+	defer simpleServer.Close()
 
-	multipartServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reqData, _ := httputil.DumpRequest(r, false)
-		t.Log(string(reqData))
-
-		content := &ContentBuffer{
-			Data:  []byte(webContent),
-			Index: 0,
-		}
-		http.ServeContent(w, r, "sample.txt", time.Now(), content)
-	}))
-	defer multipartServer.Close()
+	simpleRangeServer := ogettest.NewSimpleRangeServer()
+	defer simpleRangeServer.Close()
 
 	type args struct {
 		url string
@@ -37,8 +22,8 @@ func Test_probe(t *testing.T) {
 		wantLength int64
 		wantErr    bool
 	}{
-		{"SingleServer", args{url: singleServer.URL}, 0, false},
-		{"MultipartServer", args{url: multipartServer.URL}, 12, false},
+		{"SingleServer", args{url: simpleServer.URL}, 0, false},
+		{"MultipartServer", args{url: simpleRangeServer.URL}, int64(len(ogettest.DefaultWebContent)), false},
 		{"InvalidServer", args{url: "invalid-url"}, 0, true},
 	}
 	for _, tt := range tests {
