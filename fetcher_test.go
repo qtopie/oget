@@ -2,91 +2,13 @@ package main
 
 import (
 	"bytes"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/http/httputil"
 	"testing"
-	"time"
+
+	"github.com/artificerpi/oget/ogettest"
 )
 
-// ContentBuffer implements some io interfaces for testing purpose.
-type ContentBuffer struct {
-	Data  []byte
-	Index int64
-}
-
-func (b *ContentBuffer) String() string {
-	return string(b.Data)
-}
-
-func (b *ContentBuffer) Len() int {
-	return len(b.Data)
-}
-
-func (b *ContentBuffer) Grow(size int) {
-	b.Data = append(b.Data, make([]byte, size)...)
-}
-
-func (b *ContentBuffer) Read(p []byte) (n int, err error) {
-	n = copy(p, b.Data[b.Index:])
-	if n != len(p) {
-		return n, errors.New("Copy failed")
-	}
-	return n, nil
-}
-
-func (b *ContentBuffer) Seek(offset int64, whence int) (ret int64, err error) {
-	switch whence {
-	case io.SeekStart:
-		if offset >= int64(len(b.Data)) || offset < 0 {
-			err = errors.New("Invalid offset")
-		} else {
-			b.Index = offset
-			return b.Index, nil
-		}
-	case io.SeekEnd:
-		return int64(len(b.Data)), nil
-	default:
-		err = errors.New("Unsupported seek method")
-	}
-
-	return 0, err
-}
-
-func (b *ContentBuffer) ReadAt(p []byte, off int64) (n int, err error) {
-	if int(off)+len(p) > b.Len() {
-		return 0, errors.New("index out of range")
-	}
-
-	n = copy(p, b.Data[off:])
-	if n != len(p) {
-		return n, errors.New("Copy failed")
-	}
-	return n, nil
-}
-
-func (b *ContentBuffer) WriteAt(p []byte, off int64) (n int, err error) {
-	if int(off)+len(p) > b.Len() {
-		size := int(off) + len(p) - b.Len()
-		b.Data = append(b.Data, make([]byte, size)...)
-	}
-
-	n = copy(b.Data[off:], p)
-	if n != len(p) {
-		return n, errors.New("Copy failed")
-	}
-
-	return n, nil
-}
-
 func TestFetcher_retrieveAll(t *testing.T) {
-	webContent := "Hello World!"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, webContent)
-	}))
+	server := ogettest.NewSimpleServer()
 	defer server.Close()
 
 	type fields struct {
@@ -100,7 +22,7 @@ func TestFetcher_retrieveAll(t *testing.T) {
 		wantW   string
 		wantErr bool
 	}{
-		{"fetchAll_mock", fields{URL: server.URL}, 12, webContent, false},
+		{"fetchAll_mock", fields{URL: server.URL}, 12, ogettest.DefaultWebContent, false},
 		{"fetchAll_failed", fields{URL: "invalid-url"}, 0, "", true},
 	}
 	for _, tt := range tests {
@@ -126,18 +48,7 @@ func TestFetcher_retrieveAll(t *testing.T) {
 }
 
 func TestFetcher_retrievePartial(t *testing.T) {
-	webContent := "HelloWorld!"
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reqData, _ := httputil.DumpRequest(r, false)
-		t.Log(string(reqData))
-
-		content := &ContentBuffer{
-			Data:  []byte(webContent),
-			Index: 0,
-		}
-		http.ServeContent(w, r, "sample.txt", time.Now(), content)
-	}))
+	server := ogettest.NewSimpleRangeServer()
 	defer server.Close()
 
 	type fields struct {
@@ -164,7 +75,7 @@ func TestFetcher_retrievePartial(t *testing.T) {
 				URL:    tt.fields.URL,
 				Pieces: tt.fields.Pieces,
 			}
-			w := &ContentBuffer{}
+			w := &ogettest.RangeBuffer{}
 			gotN, err := f.retrievePartial(tt.args.pieceN, w)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Fetcher.retrievePartial() error = %v, wantErr %v", err, tt.wantErr)
