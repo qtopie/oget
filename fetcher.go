@@ -1,11 +1,11 @@
-package main
+package oget
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
+	"os"
 )
 
 // RangeSize sets the default range size to 1MB
@@ -14,74 +14,84 @@ const (
 	ThreadAmount int   = 32
 )
 
-// RangeHeader defines the part of file to download.
-type RangeHeader struct {
-	StartPos int64
-	EndPos   int64
+// Fetcher is the interface for different download protocols.
+type Fetcher interface {
+	Fetch(ctx context.Context, task *ChunkTask) error
 }
 
-func (h *RangeHeader) String() string {
-	return fmt.Sprintf("bytes=%d-%d", h.StartPos, h.EndPos)
+// ChunkTask represents a small piece of a file to be downloaded.
+type ChunkTask struct {
+	FileID         string
+	ChunkID        int
+	Offset         int64
+	Length         int64
+	URL            string
+	FileHandler    *os.File
+	FetcherHandler Fetcher
 }
 
-// Fetcher downloads file from URL.
-type Fetcher struct {
-	URL    string
-	Pieces []RangeHeader
+// HttpFetcher implements Fetcher for HTTP protocol.
+type HttpFetcher struct {
+	Client *http.Client
 }
 
-// retrieveAll downloads the file completely.
-func (f *Fetcher) retrieveAll(w io.Writer) (int64, error) {
-	resp, err := http.Get(f.URL)
+// NewHttpFetcher creates a new HttpFetcher with default configuration.
+func NewHttpFetcher() *HttpFetcher {
+	return &HttpFetcher{
+		Client: &http.Client{},
+	}
+}
+
+// Fetch executes a single ChunkTask with context support.
+func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, task.URL, nil)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
-	n, err := io.Copy(w, resp.Body)
-	return n, err
-}
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", task.Offset, task.Offset+task.Length-1)
+	req.Header.Set("Range", rangeHeader)
 
-// retrievePartial downloads part of the file.
-func (f *Fetcher) retrievePartial(pieceN int, w io.WriterAt) (n int, err error) {
-	if pieceN < 0 || pieceN >= len(f.Pieces) {
-		return 0, errors.New("Unspported index")
-	}
-	s := f.Pieces[pieceN]
-
-	// make HTTP Range request to get file from server
-	req, err := http.NewRequest(http.MethodGet, f.URL, nil)
+	resp, err := f.Client.Do(req)
 	if err != nil {
-		return
-	}
-	req.Header.Set("Range", s.String())
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return
+		return err
 	}
 	defer resp.Body.Close()
 
-	// read data from response and write it
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return
+	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	n, err = w.WriteAt(data, s.StartPos)
-	return
-}
+	buf := make([]byte, 32*1024)
+	var written int64
+	for {
+		// Check context before each read/write cycle
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 
-func splitSize(length int64) (size int64) {
-	// less than 1KB
-	if length <= 1024 {
-		return 1024
+		nr, er := resp.Body.Read(buf)
+		if nr > 0 {
+			nw, ew := task.FileHandler.WriteAt(buf[0:nr], task.Offset+written)
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if ew != nil {
+				return ew
+			}
+			if nr != nw {
+				return io.ErrShortWrite
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				return er
+			}
+			break
+		}
 	}
 
-	size = length / int64(ThreadAmount)
-	if length%32 != 0 {
-		size = size + 1
-	}
-
-	return
+	return nil
 }

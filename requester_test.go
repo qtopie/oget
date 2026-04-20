@@ -1,9 +1,10 @@
-package main
+package oget
 
 import (
+	"context"
 	"testing"
 
-	"github.com/artificerpi/oget/ogettest"
+	"github.com/qtopie/oget/ogettest"
 )
 
 func Test_probe(t *testing.T) {
@@ -28,7 +29,8 @@ func Test_probe(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotLength, err := probe(tt.args.url)
+			r := NewRequester(tt.args.url)
+			gotLength, err := r.probe(context.TODO())
 			if (err != nil) != tt.wantErr {
 				t.Errorf("probe() error = %v, wantErr %v", err, tt.wantErr)
 				return
