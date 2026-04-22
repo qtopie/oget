@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/qtopie/oget"
+	"github.com/qtopie/oget/pkg/oget"
 )
 
 func main() {

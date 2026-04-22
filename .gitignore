@@ -18,4 +18,4 @@ debug.test
 *.iso
 *.oget
 .task/
-oget/
+oget+

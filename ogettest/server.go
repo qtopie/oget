@@ -17,7 +17,6 @@ const (
 )
 
 // DummyContent implements io.ReadSeeker to simulate a large file without using memory.
-// It generates deterministic data based on the offset.
 type DummyContent struct {
 	Size int64
 	off  int64
@@ -38,7 +37,6 @@ func (d *DummyContent) Read(p []byte) (n int, err error) {
 	}
 
 	for i := range p {
-		// Generate deterministic byte based on absolute position
 		p[i] = byte((d.off + int64(i)) % 256)
 	}
 
@@ -69,15 +67,13 @@ func (d *DummyContent) Seek(offset int64, whence int) (int64, error) {
 	return d.off, nil
 }
 
-// CalculateSHA256 returns the hash of the virtual content for verification.
 func (d *DummyContent) CalculateSHA256() string {
 	h := sha256.New()
-	// We have to "read" it all to hash it, but it's fast since it's procedural.
 	buf := make([]byte, 32*1024)
-	curr := d.off
-	d.off = 0
+	// Create a temporary clone for hashing to not affect state
+	clone := &DummyContent{Size: d.Size}
 	for {
-		n, err := d.Read(buf)
+		n, err := clone.Read(buf)
 		if n > 0 {
 			h.Write(buf[:n])
 		}
@@ -85,32 +81,33 @@ func (d *DummyContent) CalculateSHA256() string {
 			break
 		}
 	}
-	d.off = curr
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// EnhancedServer handles dynamic bandwidth and fault simulation.
 type EnhancedServer struct {
 	*httptest.Server
-	Content     io.ReadSeeker
+	Content     *DummyContent
 	BytesPerSec int64
 	Latency     time.Duration
 	ETag        string
 }
 
-func NewEnhancedServer(content io.ReadSeeker) *EnhancedServer {
+func NewEnhancedServer(content *DummyContent) *EnhancedServer {
 	s := &EnhancedServer{
 		Content: content,
 		ETag:    "initial-etag",
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 1. Simulate Latency
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
 		if s.Latency > 0 {
 			time.Sleep(s.Latency)
 		}
 
-		// 2. Bandwidth Limiting (Throttling)
 		var writer io.Writer = w
 		if s.BytesPerSec > 0 {
 			writer = &throttledWriter{
@@ -122,15 +119,15 @@ func NewEnhancedServer(content io.ReadSeeker) *EnhancedServer {
 		w.Header().Set("ETag", s.ETag)
 		w.Header().Set("Accept-Ranges", "bytes")
 
-		// ServeContent handles Range requests automatically
-		http.ServeContent(fakeResponseWriter{w, writer}, r, "testfile.bin", time.Now(), s.Content)
+		// Important: Create a fresh reader for each request to avoid seek conflicts
+		reader := &DummyContent{Size: s.Content.Size}
+		http.ServeContent(fakeResponseWriter{w, writer}, r, "testfile.bin", time.Now(), reader)
 	})
 
 	s.Server = httptest.NewServer(handler)
 	return s
 }
 
-// throttledWriter limits the data transfer speed.
 type throttledWriter struct {
 	w           io.Writer
 	bytesPerSec int64
@@ -139,14 +136,12 @@ type throttledWriter struct {
 func (t *throttledWriter) Write(p []byte) (n int, err error) {
 	n, err = t.w.Write(p)
 	if n > 0 && t.bytesPerSec > 0 {
-		// Calculate time needed for this amount of data
 		duration := time.Duration(n) * time.Second / time.Duration(t.bytesPerSec)
 		time.Sleep(duration)
 	}
 	return n, err
 }
 
-// fakeResponseWriter allows us to wrap the underlying writer for ServeContent.
 type fakeResponseWriter struct {
 	http.ResponseWriter
 	w io.Writer
@@ -156,20 +151,17 @@ func (f fakeResponseWriter) Write(p []byte) (int, error) {
 	return f.w.Write(p)
 }
 
-// NewSimpleServer create a simple httptest.Server serving 'Hello World!' content
 func NewSimpleServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, DefaultWebContent)
 	}))
 }
 
-// NewLargeRangeServer creates a server with a virtual file of specified size.
 func NewLargeRangeServer(sizeMB int) *EnhancedServer {
 	content := &DummyContent{Size: int64(sizeMB) * 1024 * 1024}
 	return NewEnhancedServer(content)
 }
 
-// NewSimpleRangeServer is kept for backward compatibility.
 func NewSimpleRangeServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeContent(w, r, "", time.Now(), &DummyContent{Size: int64(len(DefaultWebContent))})
