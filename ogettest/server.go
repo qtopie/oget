@@ -1,13 +1,13 @@
 package ogettest
 
 import (
-	"errors"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
-	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,104 +16,162 @@ const (
 	DefaultWebContent = "Hello World!"
 )
 
-// RangeBuffer is an alternative for bytes.Buffer but implements io.Seeker
-// and some other interface for range testing.
-type RangeBuffer struct {
-	Data  []byte
-	Index int64
+// DummyContent implements io.ReadSeeker to simulate a large file without using memory.
+// It generates deterministic data based on the offset.
+type DummyContent struct {
+	Size int64
+	off  int64
+	mu   sync.Mutex
 }
 
-func (b *RangeBuffer) String() string {
-	return string(b.Data)
-}
+func (d *DummyContent) Read(p []byte) (n int, err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-func (b *RangeBuffer) Len() int {
-	return len(b.Data)
-}
-
-func (b *RangeBuffer) Grow(size int) {
-	b.Data = append(b.Data, make([]byte, size)...)
-}
-
-func (b *RangeBuffer) Read(p []byte) (n int, err error) {
-	n = copy(p, b.Data[b.Index:])
-	if n != len(p) {
-		return n, errors.New("Copy failed")
+	if d.off >= d.Size {
+		return 0, io.EOF
 	}
-	return n, nil
+
+	remaining := d.Size - d.off
+	if int64(len(p)) > remaining {
+		p = p[:remaining]
+	}
+
+	for i := range p {
+		// Generate deterministic byte based on absolute position
+		p[i] = byte((d.off + int64(i)) % 256)
+	}
+
+	d.off += int64(len(p))
+	return len(p), nil
 }
 
-func (b *RangeBuffer) Seek(offset int64, whence int) (ret int64, err error) {
+func (d *DummyContent) Seek(offset int64, whence int) (int64, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var newOff int64
 	switch whence {
 	case io.SeekStart:
-		if offset >= int64(len(b.Data)) || offset < 0 {
-			err = errors.New("Invalid offset")
-		} else {
-			b.Index = offset
-			return b.Index, nil
-		}
+		newOff = offset
+	case io.SeekCurrent:
+		newOff = d.off + offset
 	case io.SeekEnd:
-		return int64(len(b.Data)), nil
+		newOff = d.Size + offset
 	default:
-		err = errors.New("Unsupported seek method")
+		return 0, fmt.Errorf("invalid whence")
 	}
 
-	return 0, err
+	if newOff < 0 {
+		return 0, fmt.Errorf("negative offset")
+	}
+	d.off = newOff
+	return d.off, nil
 }
 
-func (b *RangeBuffer) ReadAt(p []byte, off int64) (n int, err error) {
-	if int(off)+len(p) > b.Len() {
-		return 0, errors.New("index out of range")
+// CalculateSHA256 returns the hash of the virtual content for verification.
+func (d *DummyContent) CalculateSHA256() string {
+	h := sha256.New()
+	// We have to "read" it all to hash it, but it's fast since it's procedural.
+	buf := make([]byte, 32*1024)
+	curr := d.off
+	d.off = 0
+	for {
+		n, err := d.Read(buf)
+		if n > 0 {
+			h.Write(buf[:n])
+		}
+		if err != nil {
+			break
+		}
 	}
-
-	n = copy(p, b.Data[off:])
-	if n != len(p) {
-		return n, errors.New("Copy failed")
-	}
-	return n, nil
+	d.off = curr
+	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (b *RangeBuffer) WriteAt(p []byte, off int64) (n int, err error) {
-	if int(off)+len(p) > b.Len() {
-		size := int(off) + len(p) - b.Len()
-		b.Data = append(b.Data, make([]byte, size)...)
+// EnhancedServer handles dynamic bandwidth and fault simulation.
+type EnhancedServer struct {
+	*httptest.Server
+	Content     io.ReadSeeker
+	BytesPerSec int64
+	Latency     time.Duration
+	ETag        string
+}
+
+func NewEnhancedServer(content io.ReadSeeker) *EnhancedServer {
+	s := &EnhancedServer{
+		Content: content,
+		ETag:    "initial-etag",
 	}
 
-	n = copy(b.Data[off:], p)
-	if n != len(p) {
-		return n, errors.New("Copy failed")
-	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. Simulate Latency
+		if s.Latency > 0 {
+			time.Sleep(s.Latency)
+		}
 
-	return n, nil
+		// 2. Bandwidth Limiting (Throttling)
+		var writer io.Writer = w
+		if s.BytesPerSec > 0 {
+			writer = &throttledWriter{
+				w:           w,
+				bytesPerSec: s.BytesPerSec,
+			}
+		}
+
+		w.Header().Set("ETag", s.ETag)
+		w.Header().Set("Accept-Ranges", "bytes")
+
+		// ServeContent handles Range requests automatically
+		http.ServeContent(fakeResponseWriter{w, writer}, r, "testfile.bin", time.Now(), s.Content)
+	})
+
+	s.Server = httptest.NewServer(handler)
+	return s
+}
+
+// throttledWriter limits the data transfer speed.
+type throttledWriter struct {
+	w           io.Writer
+	bytesPerSec int64
+}
+
+func (t *throttledWriter) Write(p []byte) (n int, err error) {
+	n, err = t.w.Write(p)
+	if n > 0 && t.bytesPerSec > 0 {
+		// Calculate time needed for this amount of data
+		duration := time.Duration(n) * time.Second / time.Duration(t.bytesPerSec)
+		time.Sleep(duration)
+	}
+	return n, err
+}
+
+// fakeResponseWriter allows us to wrap the underlying writer for ServeContent.
+type fakeResponseWriter struct {
+	http.ResponseWriter
+	w io.Writer
+}
+
+func (f fakeResponseWriter) Write(p []byte) (int, error) {
+	return f.w.Write(p)
 }
 
 // NewSimpleServer create a simple httptest.Server serving 'Hello World!' content
 func NewSimpleServer() *httptest.Server {
-	return NewServer(strings.NewReader(DefaultWebContent))
-}
-
-// NewServer creates a simple httptest.Server with an io.Reader for writing content.
-func NewServer(contentReader io.Reader) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, err := io.Copy(w, contentReader)
-		if err != nil {
-			log.Fatal(err)
-		}
+		_, _ = io.WriteString(w, DefaultWebContent)
 	}))
 }
 
-// NewSimpleRangeServer creates a simple httptest.Server serving 'Hello World!' content.
-func NewSimpleRangeServer() *httptest.Server {
-	return NewRangeServer(strings.NewReader(DefaultWebContent))
+// NewLargeRangeServer creates a server with a virtual file of specified size.
+func NewLargeRangeServer(sizeMB int) *EnhancedServer {
+	content := &DummyContent{Size: int64(sizeMB) * 1024 * 1024}
+	return NewEnhancedServer(content)
 }
 
-// NewRangeServer creates a simple httptest.Server with an io.Reader for writing content.
-func NewRangeServer(content io.ReadSeeker) *httptest.Server {
+// NewSimpleRangeServer is kept for backward compatibility.
+func NewSimpleRangeServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// log request
-		reqData, _ := httputil.DumpRequest(r, false)
-		log.Println(string(reqData))
-
-		http.ServeContent(w, r, "", time.Now(), content)
+		http.ServeContent(w, r, "", time.Now(), &DummyContent{Size: int64(len(DefaultWebContent))})
 	}))
 }

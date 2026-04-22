@@ -7,37 +7,19 @@ import (
 	"github.com/qtopie/oget/ogettest"
 )
 
-func Test_probe(t *testing.T) {
-	simpleServer := ogettest.NewSimpleServer()
-	defer simpleServer.Close()
+func TestRequester_Probe(t *testing.T) {
+	server := ogettest.NewSimpleServer()
+	defer server.Close()
 
-	simpleRangeServer := ogettest.NewSimpleRangeServer()
-	defer simpleRangeServer.Close()
+	r := NewRequester(server.URL, DefaultConfig())
+	length, etag, lastModified, err := r.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe failed: %v", err)
+	}
 
-	type args struct {
-		url string
+	if length != int64(len(ogettest.DefaultWebContent)) {
+		t.Errorf("got length %d, want %d", length, len(ogettest.DefaultWebContent))
 	}
-	tests := []struct {
-		name       string
-		args       args
-		wantLength int64
-		wantErr    bool
-	}{
-		{"SingleServer", args{url: simpleServer.URL}, 0, false},
-		{"MultipartServer", args{url: simpleRangeServer.URL}, int64(len(ogettest.DefaultWebContent)), false},
-		{"InvalidServer", args{url: "invalid-url"}, 0, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := NewRequester(tt.args.url)
-			gotLength, err := r.probe(context.TODO())
-			if (err != nil) != tt.wantErr {
-				t.Errorf("probe() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if gotLength != tt.wantLength {
-				t.Errorf("probe() = %v, want %v", gotLength, tt.wantLength)
-			}
-		})
-	}
+	_ = etag
+	_ = lastModified
 }

@@ -1,0 +1,49 @@
+version: '3'
+
+vars:
+  BINARY_NAME: oget
+  MAIN_PATH: ./cmd/main.go
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the oget binary
+    cmds:
+      - go build -v -o {{.BINARY_NAME}} {{.MAIN_PATH}}
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BINARY_NAME}}"
+
+  run:
+    desc: Build and run oget
+    cmds:
+      - task: build
+      - ./{{.BINARY_NAME}} {{.CLI_ARGS}}
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test -v ./...
+
+  install:
+    desc: Install oget binary to GOBIN
+    cmds:
+      - go install ./cmd
+
+  fmt:
+    desc: Format Go source code
+    cmds:
+      - go fmt ./...
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -f {{.BINARY_NAME}}
+      - go clean

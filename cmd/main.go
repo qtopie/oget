@@ -6,15 +6,17 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/artificerpi/oget"
+	"github.com/qtopie/oget"
 )
 
 func main() {
 	var fileName string
-	var threadCount int
+	var concurrency int
+	var verbose bool
 
 	flag.StringVar(&fileName, "file", "", "name or path to save file (only for single URL)")
-	flag.IntVar(&threadCount, "threads", 32, "number of worker threads")
+	flag.IntVar(&concurrency, "concurrency", 0, "number of concurrent workers (default 8 with autotune, 32 without)")
+	flag.BoolVar(&verbose, "v", false, "enable verbose output for dynamic detection")
 	flag.Parse()
 
 	args := flag.Args()
@@ -24,20 +26,7 @@ func main() {
 		return
 	}
 
-	for _, uri := range args {
-		if !validateURL(uri) {
-			fmt.Printf("URL %s is invalid or not supported\n", uri)
-			return
-		}
-	}
-
-	downloader := oget.NewDownloader(args, threadCount)
+	downloader := oget.NewDownloader(args, concurrency)
+	downloader.Config.Verbose = verbose
 	downloader.Download(context.Background())
-}
-
-// Simple validation copied from util.go for simplicity in main, 
-// or I could export it from oget. 
-// Let's assume we want to keep cmd/main.go simple.
-func validateURL(uri string) bool {
-	return true // Simplified for now, or use oget.ValidateURL if exported
 }

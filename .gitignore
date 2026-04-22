@@ -15,3 +15,7 @@
 .vscode/
 debug
 debug.test
+*.iso
+*.oget
+.task/
+oget/
