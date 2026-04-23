@@ -7,8 +7,6 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
-
-	"golang.org/x/sys/unix"
 )
 
 // MmapStorageHandler implements StorageHandler using memory-mapped files.
@@ -36,16 +34,17 @@ func NewMmapStorageHandler(file *os.File, length int64) (*MmapStorageHandler, er
 }
 
 func (h *MmapStorageHandler) WriteAt(p []byte, off int64) (n int, err error) {
-	if off < 0 || int(off) >= len(h.data) {
-		return 0, io.EOF
-	}
-
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
+	if off < 0 || int(off) >= len(h.data) {
+		return 0, io.ErrShortWrite
+	}
+
 	end := int(off) + len(p)
 	if end > len(h.data) {
-		end = len(h.data)
+		n = copy(h.data[off:], p[:len(h.data)-int(off)])
+		return n, io.ErrShortWrite
 	}
 
 	n = copy(h.data[off:end], p)
@@ -53,16 +52,17 @@ func (h *MmapStorageHandler) WriteAt(p []byte, off int64) (n int, err error) {
 }
 
 func (h *MmapStorageHandler) ReadAt(p []byte, off int64) (n int, err error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	if off < 0 || int(off) >= len(h.data) {
 		return 0, io.EOF
 	}
 
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
 	end := int(off) + len(p)
 	if end > len(h.data) {
-		end = len(h.data)
+		n = copy(p, h.data[off:])
+		return n, io.EOF
 	}
 
 	n = copy(p, h.data[off:end])
@@ -96,14 +96,14 @@ func (h *MmapStorageHandler) SpliceFrom(fd uintptr, off int64, count int64) (int
 
 	var total int64
 	for total < count {
-		n1, err := unix.Splice(int(fd), nil, int(p2.Fd()), nil, int(count-total), unix.SPLICE_F_MOVE|unix.SPLICE_F_MORE)
+		n1, err := splice(int(fd), nil, int(p2.Fd()), nil, int(count-total), spliceFMove|spliceFMore)
 		if err != nil {
 			return total, err
 		}
 		if n1 == 0 {
 			break
 		}
-		n2, err := unix.Splice(int(p1.Fd()), nil, int(h.file.Fd()), &off, int(n1), unix.SPLICE_F_MOVE)
+		n2, err := splice(int(p1.Fd()), nil, int(h.file.Fd()), &off, int(n1), spliceFMove)
 		if err != nil {
 			return total, err
 		}

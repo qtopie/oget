@@ -6,10 +6,20 @@ import (
 	"strings"
 )
 
-func parseFileName(url string) string {
-	tokens := strings.Split(url, "/")
-	fileName := tokens[len(tokens)-1]
+func parseFileName(uri string) string {
+	u, err := url.Parse(uri)
+	if err != nil {
+		tokens := strings.Split(uri, "/")
+		return tokens[len(tokens)-1]
+	}
 
+	path := u.Path
+	if path == "" || path == "/" {
+		return "index.html"
+	}
+
+	tokens := strings.Split(path, "/")
+	fileName := tokens[len(tokens)-1]
 	if fileName == "" {
 		fileName = "index.html"
 	}

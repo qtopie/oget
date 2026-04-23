@@ -46,19 +46,34 @@ func TestHttpFetcher_Fetch(t *testing.T) {
 	}
 }
 
-func TestRequester_Probe(t *testing.T) {
+func TestHttpFetcher_FetchIncomplete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", "12")
+		w.Header().Set("Content-Length", "20")
 		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "too short") // Only 9 bytes, but promised 20
 	}))
 	defer server.Close()
 
-	r := NewRequester(server.URL, DefaultConfig())
-	length, _, _, err := r.probe(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	fileName := "test_fetch_incomplete"
+	file, _ := os.Create(fileName)
+	defer os.Remove(fileName)
+	defer file.Close()
+
+	storage := &FileStorageHandler{File: file}
+	fetcher := &HttpFetcher{Client: &http.Client{}}
+
+	task := &ChunkTask{
+		FileID:         fileName,
+		ChunkID:        0,
+		Offset:         0,
+		Length:         20,
+		URL:            server.URL,
+		StorageHandler: storage,
+		FetcherHandler: fetcher,
 	}
-	if length != 12 {
-		t.Errorf("got %d, want 12", length)
+
+	err := fetcher.Fetch(context.TODO(), task)
+	if err == nil {
+		t.Errorf("Fetch should have failed for incomplete data")
 	}
 }

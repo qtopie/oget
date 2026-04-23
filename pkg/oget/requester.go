@@ -8,8 +8,6 @@ import (
 	"os"
 	"strconv"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // Requester manages probing and task creation for a single URL.
@@ -101,7 +99,7 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 	// Ensure file has enough space if length is known.
 	if length > 0 {
 		// Priority 1: Use fallocate for physical pre-allocation (best performance)
-		if err := unix.Fallocate(int(file.Fd()), 0, 0, length); err != nil {
+		if err := fallocate(int(file.Fd()), 0, 0, length); err != nil {
 			log.Printf("Warning: fallocate failed for %s, falling back to truncate: %v", fileName, err)
 			// Priority 2: Fallback to Truncate (Sparse file)
 			if err := file.Truncate(length); err != nil {

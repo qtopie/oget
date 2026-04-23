@@ -88,7 +88,7 @@ func (f *FileStorageHandler) SpliceFrom(fd uintptr, off int64, count int64) (int
 
 	var total int64
 	for total < count {
-		n1, err := unix.Splice(int(fd), nil, int(p2.Fd()), nil, int(count-total), unix.SPLICE_F_MOVE|unix.SPLICE_F_MORE)
+		n1, err := splice(int(fd), nil, int(p2.Fd()), nil, int(count-total), spliceFMove|spliceFMore)
 		if err != nil {
 			return total, err
 		}
@@ -96,7 +96,7 @@ func (f *FileStorageHandler) SpliceFrom(fd uintptr, off int64, count int64) (int
 			break
 		}
 
-		n2, err := unix.Splice(int(p1.Fd()), nil, int(f.Fd()), &off, int(n1), unix.SPLICE_F_MOVE)
+		n2, err := splice(int(p1.Fd()), nil, int(f.Fd()), &off, int(n1), spliceFMove)
 		if err != nil {
 			return total, err
 		}
@@ -162,7 +162,9 @@ func NewHttpFetcher(config *Config) *HttpFetcher {
 		KeepAlive: 30 * time.Second,
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
-				_ = unix.SetsockoptString(int(fd), unix.IPPROTO_TCP, unix.TCP_CONGESTION, "bbr")
+				if tcpCongestion != 0 {
+					_ = unix.SetsockoptString(int(fd), unix.IPPROTO_TCP, tcpCongestion, "bbr")
+				}
 			})
 		},
 	}
@@ -274,6 +276,10 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 			}
 			break
 		}
+	}
+
+	if task.Length != -1 && written < task.Length {
+		return fmt.Errorf("download incomplete: got %d bytes, want %d", written, task.Length)
 	}
 
 	if task.OnChunkComplete != nil {

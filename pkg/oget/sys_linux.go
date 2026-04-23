@@ -1,0 +1,20 @@
+//go:build linux
+// +build linux
+
+package oget
+
+import "golang.org/x/sys/unix"
+
+const (
+	tcpCongestion = unix.TCP_CONGESTION
+	spliceFMove   = unix.SPLICE_F_MOVE
+	spliceFMore   = unix.SPLICE_F_MORE
+)
+
+func splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (int, error) {
+	return unix.Splice(rfd, roff, wfd, woff, len, flags)
+}
+
+func fallocate(fd int, mode uint32, off int64, len int64) error {
+	return unix.Fallocate(fd, mode, off, len)
+}
