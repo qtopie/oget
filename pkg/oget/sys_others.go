@@ -11,7 +11,7 @@ const (
 	spliceFMore   = 0
 )
 
-func splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (int, error) {
+func splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (int64, error) {
 	return 0, errors.New("splice is only supported on linux")
 }
 

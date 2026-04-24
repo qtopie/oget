@@ -11,7 +11,7 @@ const (
 	spliceFMore   = unix.SPLICE_F_MORE
 )
 
-func splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (int, error) {
+func splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (int64, error) {
 	return unix.Splice(rfd, roff, wfd, woff, len, flags)
 }
 
