@@ -3,6 +3,11 @@ version: '3'
 vars:
   BINARY_NAME: oget
   MAIN_PATH: ./cmd/main.go
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo "none"
+  LDFLAGS: -X github.com/qtopie/oget/pkg/oget.Version={{.VERSION}} -X github.com/qtopie/oget/pkg/oget.Commit={{.COMMIT}}
 
 tasks:
   default:
@@ -13,7 +18,7 @@ tasks:
   build:
     desc: Build the oget binary
     cmds:
-      - go build -v -o {{.BINARY_NAME}} {{.MAIN_PATH}}
+      - go build -v -ldflags="{{.LDFLAGS}}" -o {{.BINARY_NAME}} {{.MAIN_PATH}}
     sources:
       - "**/*.go"
       - go.mod
@@ -35,7 +40,7 @@ tasks:
   install:
     desc: Install oget binary to GOBIN
     cmds:
-      - go install ./cmd
+      - go install -ldflags="{{.LDFLAGS}}" ./cmd
 
   fmt:
     desc: Format Go source code
@@ -53,12 +58,12 @@ tasks:
     cmds:
       - mkdir -p dist
       # Linux
-      - GOOS=linux GOARCH=amd64 go build -o dist/{{.BINARY_NAME}}_linux_amd64 {{.MAIN_PATH}}
-      - GOOS=linux GOARCH=arm64 go build -o dist/{{.BINARY_NAME}}_linux_arm64 {{.MAIN_PATH}}
+      - GOOS=linux GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o dist/{{.BINARY_NAME}}_linux_amd64 {{.MAIN_PATH}}
+      - GOOS=linux GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -o dist/{{.BINARY_NAME}}_linux_arm64 {{.MAIN_PATH}}
       # macOS
-      - GOOS=darwin GOARCH=amd64 go build -o dist/{{.BINARY_NAME}}_darwin_amd64 {{.MAIN_PATH}}
-      - GOOS=darwin GOARCH=arm64 go build -o dist/{{.BINARY_NAME}}_darwin_arm64 {{.MAIN_PATH}}
+      - GOOS=darwin GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o dist/{{.BINARY_NAME}}_darwin_amd64 {{.MAIN_PATH}}
+      - GOOS=darwin GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -o dist/{{.BINARY_NAME}}_darwin_arm64 {{.MAIN_PATH}}
       # Windows
-      - GOOS=windows GOARCH=amd64 go build -o dist/{{.BINARY_NAME}}_windows_amd64.exe {{.MAIN_PATH}}
+      - GOOS=windows GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o dist/{{.BINARY_NAME}}_windows_amd64.exe {{.MAIN_PATH}}
       # Packaging
       - cd dist && for f in *; do tar -czvf "${f}.tar.gz" "$f"; done

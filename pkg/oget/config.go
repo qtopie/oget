@@ -5,6 +5,11 @@ import (
 	"log"
 )
 
+var (
+	Version = "dev"
+	Commit  = "none"
+)
+
 // Config represents the global configuration of oget.
 type Config struct {
 	Concurrency    int    `mapstructure:"concurrency"`

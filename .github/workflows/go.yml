@@ -45,12 +45,15 @@ jobs:
 
     - name: Build
       run: |
+        VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+        COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "none")
+        LDFLAGS="-X github.com/qtopie/oget/pkg/oget.Version=$VERSION -X github.com/qtopie/oget/pkg/oget.Commit=$COMMIT"
         mkdir -p dist
-        GOOS=linux GOARCH=amd64 go build -o dist/oget_linux_amd64 ./cmd/main.go
-        GOOS=linux GOARCH=arm64 go build -o dist/oget_linux_arm64 ./cmd/main.go
-        GOOS=darwin GOARCH=amd64 go build -o dist/oget_darwin_amd64 ./cmd/main.go
-        GOOS=darwin GOARCH=arm64 go build -o dist/oget_darwin_arm64 ./cmd/main.go
-        GOOS=windows GOARCH=amd64 go build -o dist/oget_windows_amd64.exe ./cmd/main.go
+        GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/oget_linux_amd64 ./cmd/main.go
+        GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/oget_linux_arm64 ./cmd/main.go
+        GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/oget_darwin_amd64 ./cmd/main.go
+        GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/oget_darwin_arm64 ./cmd/main.go
+        GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/oget_windows_amd64.exe ./cmd/main.go
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
