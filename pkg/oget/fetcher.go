@@ -158,7 +158,7 @@ func NewHttpFetcher(config *Config) *HttpFetcher {
 
 	dialer := &net.Dialer{
 		// Removed bbr setting directly, now using setBBR(fd) in Control
-		Timeout:   30 * time.Second,
+		Timeout:   time.Duration(config.Timeout) * time.Second,
 		KeepAlive: 30 * time.Second,
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
@@ -173,7 +173,7 @@ func NewHttpFetcher(config *Config) *HttpFetcher {
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   time.Duration(config.Timeout) * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		TLSClientConfig: &tls.Config{
 			NextProtos: []string{"h2", "http/1.1"},

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/qtopie/oget/ogettest"
 )
@@ -14,16 +15,31 @@ func TestRequester_Probe(t *testing.T) {
 	defer server.Close()
 
 	r := NewRequester(server.URL, DefaultConfig())
-	length, etag, lastModified, err := r.probe(context.Background())
+	meta, err := r.Prober.Probe(context.Background(), r.Resource)
 	if err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
 
-	if length != int64(len(ogettest.DefaultWebContent)) {
-		t.Errorf("got length %d, want %d", length, len(ogettest.DefaultWebContent))
+	if meta.Size != int64(len(ogettest.DefaultWebContent)) {
+		t.Errorf("got length %d, want %d", meta.Size, len(ogettest.DefaultWebContent))
 	}
-	_ = etag
-	_ = lastModified
+	_ = meta.ETag
+	_ = meta.LastModified
+}
+
+func TestRequester_ProbeTimeout(t *testing.T) {
+	// Start a server that sleeps longer than the timeout
+	server := ogettest.NewSlowServer(2 * time.Second)
+	defer server.Close()
+
+	config := DefaultConfig()
+	config.Timeout = 1 // 1 second timeout
+	r := NewRequester(server.URL, config)
+	
+	_, err := r.Prober.Probe(context.Background(), r.Resource)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
 }
 
 func TestRequester_PrepareTasks(t *testing.T) {

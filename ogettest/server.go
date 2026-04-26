@@ -167,3 +167,10 @@ func NewSimpleRangeServer() *httptest.Server {
 		http.ServeContent(w, r, "", time.Now(), &DummyContent{Size: int64(len(DefaultWebContent))})
 	}))
 }
+
+func NewSlowServer(delay time.Duration) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(delay)
+		_, _ = io.WriteString(w, DefaultWebContent)
+	}))
+}

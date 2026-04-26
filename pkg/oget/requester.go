@@ -10,24 +10,38 @@ import (
 	"time"
 )
 
-// Requester manages probing and task creation for a single URL.
+// ResourceMetadata contains basic information about a remote resource.
+type ResourceMetadata struct {
+	Size         int64
+	ETag         string
+	LastModified string
+}
+
+// Prober defines the interface for resource discovery.
+type Prober interface {
+	Probe(ctx context.Context, resource string) (*ResourceMetadata, error)
+}
+
+// Requester manages probing and task creation for a single resource.
 type Requester struct {
-	URL             string
+	Resource        string
 	Fetcher         Fetcher
+	Prober          Prober
 	Config          *Config
 	OnProgress      func(int)
 	OnChunkComplete func(int, string)
 	SubmitTask      func(*ChunkTask)
 }
 
-func NewRequester(url string, config *Config) *Requester {
+func NewRequester(resource string, config *Config) *Requester {
 	if config == nil {
 		config = DefaultConfig()
 	}
 	return &Requester{
-		URL:     url,
-		Fetcher: NewHttpFetcher(config),
-		Config:  config,
+		Resource: resource,
+		Fetcher:  NewHttpFetcher(config),
+		Prober:   NewHttpProber(config),
+		Config:   config,
 	}
 }
 
@@ -52,14 +66,18 @@ func (r *Requester) createStorageHandler(file *os.File, length int64) (StorageHa
 	}
 }
 
-// PrepareTasks probes the URL and splits it into ChunkTasks.
+// PrepareTasks probes the resource and splits it into ChunkTasks.
 func (r *Requester) PrepareTasks(ctx context.Context) error {
-	length, etag, lastModified, err := r.probe(ctx)
+	meta, err := r.Prober.Probe(ctx, r.Resource)
 	if err != nil {
-		return fmt.Errorf("failed to probe URL %s: %w", r.URL, err)
+		return fmt.Errorf("failed to probe resource %s: %w", r.Resource, err)
 	}
 
-	fileName := parseFileName(r.URL)
+	length := meta.Size
+	etag := meta.ETag
+	lastModified := meta.LastModified
+
+	fileName := parseFileName(r.Resource)
 	stateFileName := r.getStateFileName(fileName)
 
 	var state *DownloadState
@@ -70,10 +88,14 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 			store := &JSONStateStore{Store: f}
 			s, err := store.Load()
 			if err == nil {
-				// Verify if server file has changed
+				// Verify if server file has changed and target file exists
 				if s.FileSize == length && !s.IsServerChanged(etag, lastModified) {
-					log.Printf("Found existing state for %s, resuming download...", fileName)
-					state = s
+					if _, err := os.Stat(fileName); err == nil {
+						log.Printf("Found existing state and file for %s, resuming download...", fileName)
+						state = s
+					} else {
+						log.Printf("Target file %s missing, restarting download", fileName)
+					}
 				} else {
 					log.Printf("Server file changed or size mismatch, restarting download for %s", fileName)
 				}
@@ -83,13 +105,13 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 	}
 
 	if state == nil {
-		state = NewDownloadState(r.URL, length, RangeSize)
+		state = NewDownloadState(r.Resource, length, RangeSize)
 		state.ETag = etag
 		state.LastModified = lastModified
 	}
 
 	log.Printf("Preparing tasks for %s (%s, size: %s, progress: %.2f%%)",
-		r.URL, fileName, humanizeSize(length), state.PercentComplete())
+		r.Resource, fileName, humanizeSize(length), state.PercentComplete())
 
 	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
@@ -147,7 +169,7 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 			ChunkID:         0,
 			Offset:          0,
 			Length:          -1, // -1 means until EOF
-			URL:             r.URL,
+			URL:             r.Resource,
 			StorageHandler:  storage,
 			FetcherHandler:  r.Fetcher,
 			OnProgress:      r.OnProgress,
@@ -185,7 +207,7 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 			ChunkID:         i,
 			Offset:          offset,
 			Length:          chunkLength,
-			URL:             r.URL,
+			URL:             r.Resource,
 			StorageHandler:  storage,
 			FetcherHandler:  r.Fetcher,
 			OnProgress:      r.OnProgress,
@@ -195,41 +217,49 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 	return nil
 }
 
-// probe makes an HTTP request with context support.
-func (r *Requester) probe(ctx context.Context) (length int64, etag string, lastModified string, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, r.URL, nil)
+// HttpProber implements Prober for HTTP protocol.
+type HttpProber struct {
+	Config *Config
+}
+
+func NewHttpProber(config *Config) *HttpProber {
+	return &HttpProber{Config: config}
+}
+
+func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
-		return 0, "", "", err
+		return nil, err
 	}
 
 	client := &http.Client{
-		Timeout: time.Second * 5,
+		Timeout: time.Second * time.Duration(p.Config.Timeout),
 	}
 	// Try range request to check if supported and get length.
 	req.Header.Set("Range", "bytes=0-0")
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, "", "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	etag = resp.Header.Get("ETag")
-	lastModified = resp.Header.Get("Last-Modified")
+	etag := resp.Header.Get("ETag")
+	lastModified := resp.Header.Get("Last-Modified")
 
 	if resp.StatusCode == http.StatusPartialContent {
 		contentRange := resp.Header.Get("Content-Range")
 		if contentRange != "" {
 			var start, end, total int64
 			fmt.Sscanf(contentRange, "bytes %d-%d/%d", &start, &end, &total)
-			return total, etag, lastModified, nil
+			return &ResourceMetadata{Size: total, ETag: etag, LastModified: lastModified}, nil
 		}
 	}
 
 	// Fallback to HEAD without Range
-	req, _ = http.NewRequestWithContext(ctx, http.MethodHead, r.URL, nil)
+	req, _ = http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	resp, err = client.Do(req)
 	if err != nil {
-		return 0, "", "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -240,9 +270,20 @@ func (r *Requester) probe(ctx context.Context) (length int64, etag string, lastM
 		attr := resp.Header.Get("Content-Length")
 		if attr != "" {
 			l, err := strconv.ParseInt(attr, 10, 64)
-			return l, etag, lastModified, err
+			return &ResourceMetadata{Size: l, ETag: etag, LastModified: lastModified}, err
 		}
 	}
 
-	return 0, etag, lastModified, nil
+	return &ResourceMetadata{Size: 0, ETag: etag, LastModified: lastModified}, nil
+}
+
+// Cleanup removes the state file associated with the resource.
+func (r *Requester) Cleanup() {
+	fileName := parseFileName(r.Resource)
+	stateFileName := r.getStateFileName(fileName)
+	if err := os.Remove(stateFileName); err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("Warning: failed to remove state file %s: %v", stateFileName, err)
+		}
+	}
 }

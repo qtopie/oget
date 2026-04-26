@@ -3,7 +3,7 @@ module github.com/qtopie/oget
 go 1.25.5
 
 require (
-	github.com/quic-go/quic-go v0.59.0
+	github.com/quic-go/quic-go v0.57.1
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/spf13/viper v1.21.0
 	golang.org/x/net v0.53.0

@@ -144,43 +144,52 @@ func (d *Downloader) spawnWorker(ctx context.Context, wg *sync.WaitGroup) {
 	}()
 }
 
-// Download starts the download process with Adaptive Concurrency Control.
-func (d *Downloader) Download(ctx context.Context) {
-	var wg sync.WaitGroup
-
-	// 1. Pre-download Probing to get TotalSize
-	var totalSize int64
-	var allTasks [][]*ChunkTask
+// PrepareAllTasks probes all URLs and returns a flattened list of tasks and the requesters.
+func (d *Downloader) PrepareAllTasks(ctx context.Context) ([]*ChunkTask, []*Requester, error) {
+	var allTasks []*ChunkTask
 	var requesters []*Requester
-
 	for _, u := range d.URLs {
 		req := NewRequester(u, d.Config)
 		req.Fetcher = d.Fetcher
-		
+
 		var urlTasks []*ChunkTask
 		req.SubmitTask = func(t *ChunkTask) {
 			urlTasks = append(urlTasks, t)
 		}
-		
+
 		if err := req.PrepareTasks(ctx); err != nil {
-			log.Printf("Warning: failed to prepare tasks for %s: %v", u, err)
-			continue
+			return nil, nil, fmt.Errorf("failed to prepare tasks for %s: %w", u, err)
 		}
 		
 		for _, t := range urlTasks {
 			if t.Length > 0 {
-				totalSize += t.Length
+				atomic.AddInt64(&d.TotalSize, t.Length)
 			}
 		}
-		
-		allTasks = append(allTasks, urlTasks)
+		allTasks = append(allTasks, urlTasks...)
 		requesters = append(requesters, req)
 	}
+	return allTasks, requesters, nil
+}
 
-	d.TotalSize = totalSize
+// Download starts the download process with Adaptive Concurrency Control.
+func (d *Downloader) Download(ctx context.Context) {
+	parentCtx := ctx
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var tasksWg sync.WaitGroup
+
+	// 1. Pre-download Probing
+	allTasks, requesters, err := d.PrepareAllTasks(ctx)
+	if err != nil {
+		log.Printf("Error: %v", err)
+		return
+	}
 
 	// Enhanced Progress Bar
-	bar := progressbar.NewOptions64(totalSize,
+	bar := progressbar.NewOptions64(d.TotalSize,
 		progressbar.OptionSetDescription("Downloading"),
 		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionShowBytes(true),
@@ -206,18 +215,28 @@ func (d *Downloader) Download(ctx context.Context) {
 	}
 
 	// 2. Submit already prepared tasks
-	for _, urlTasks := range allTasks {
+	for _, t := range allTasks {
 		// Create a local variable for the progress bar to be used in the closure
 		onProgress := func(n int) {
 			atomic.AddInt64(&d.TotalProcessed, int64(n))
 			_ = bar.Add(n)
 		}
 		
-		for _, t := range urlTasks {
-			t.OnProgress = onProgress
-			d.addTask(t)
+		t.OnProgress = onProgress
+		
+		// Track task completion
+		tasksWg.Add(1)
+		originalOnComplete := t.OnChunkComplete
+		t.OnChunkComplete = func(chunkID int, hash string) {
+			if originalOnComplete != nil {
+				originalOnComplete(chunkID, hash)
+			}
+			tasksWg.Done()
 		}
+		
+		d.addTask(t)
 	}
+
 
 	// 3. Bandwidth Auto-Tuner
 	if d.Config.AutoTune {
@@ -271,6 +290,19 @@ func (d *Downloader) Download(ctx context.Context) {
 		}()
 	}
 
+	// Wait for all tasks to complete in a separate goroutine
+	go func() {
+		tasksWg.Wait()
+		cancel()
+	}()
+
 	wg.Wait()
 	_ = bar.Finish()
+
+	// Cleanup state files if download completed successfully
+	if parentCtx.Err() == nil {
+		for _, r := range requesters {
+			r.Cleanup()
+		}
+	}
 }
