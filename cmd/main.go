@@ -17,7 +17,7 @@ func main() {
 
 	flag.StringVar(&fileName, "file", "", "name or path to save file (only for single URL)")
 	flag.IntVar(&concurrency, "concurrency", 0, "number of concurrent workers (default 8 with autotune, 32 without)")
-	flag.BoolVar(&verbose, "v", false, "enable verbose output for dynamic detection")
+	flag.BoolVar(&verbose, "verbose", false, "enable verbose output for dynamic detection")
 	flag.BoolVar(&version, "version", false, "show version information")
 	flag.Parse()
 
