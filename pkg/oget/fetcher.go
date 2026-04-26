@@ -17,7 +17,6 @@ import (
 
 	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http2"
-	"golang.org/x/sys/unix"
 )
 
 // RangeSize sets the default range size to 1MB
@@ -158,13 +157,12 @@ func NewHttpFetcher(config *Config) *HttpFetcher {
 	}
 
 	dialer := &net.Dialer{
+		// Removed bbr setting directly, now using setBBR(fd) in Control
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
-				if tcpCongestion != 0 {
-					_ = unix.SetsockoptString(int(fd), unix.IPPROTO_TCP, tcpCongestion, "bbr")
-				}
+				setBBR(fd)
 			})
 		},
 	}

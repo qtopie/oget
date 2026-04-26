@@ -45,5 +45,20 @@ tasks:
   clean:
     desc: Remove build artifacts
     cmds:
-      - rm -f {{.BINARY_NAME}}
+      - rm -rf {{.BINARY_NAME}} dist/
       - go clean
+
+  release:
+    desc: Build and package release binaries
+    cmds:
+      - mkdir -p dist
+      # Linux
+      - GOOS=linux GOARCH=amd64 go build -o dist/{{.BINARY_NAME}}_linux_amd64 {{.MAIN_PATH}}
+      - GOOS=linux GOARCH=arm64 go build -o dist/{{.BINARY_NAME}}_linux_arm64 {{.MAIN_PATH}}
+      # macOS
+      - GOOS=darwin GOARCH=amd64 go build -o dist/{{.BINARY_NAME}}_darwin_amd64 {{.MAIN_PATH}}
+      - GOOS=darwin GOARCH=arm64 go build -o dist/{{.BINARY_NAME}}_darwin_arm64 {{.MAIN_PATH}}
+      # Windows
+      - GOOS=windows GOARCH=amd64 go build -o dist/{{.BINARY_NAME}}_windows_amd64.exe {{.MAIN_PATH}}
+      # Packaging
+      - cd dist && for f in *; do tar -czvf "${f}.tar.gz" "$f"; done

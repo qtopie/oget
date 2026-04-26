@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [ '1.22', '1.23' ]
+        go-version: [ '1.25' ]
     
     steps:
     - uses: actions/checkout@v4
@@ -41,23 +41,25 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.23'
+        go-version: '1.25'
 
-    - name: Install gox
-      run: go install github.com/mitchellh/gox@latest
-
-    - name: Build with gox
+    - name: Build
       run: |
-        gox -osarch="linux/amd64 darwin/amd64 windows/amd64" \
-            -output="dist/oget_{{.OS}}_{{.Arch}}" \
-            ./cmd/main.go
+        mkdir -p dist
+        GOOS=linux GOARCH=amd64 go build -o dist/oget_linux_amd64 ./cmd/main.go
+        GOOS=linux GOARCH=arm64 go build -o dist/oget_linux_arm64 ./cmd/main.go
+        GOOS=darwin GOARCH=amd64 go build -o dist/oget_darwin_amd64 ./cmd/main.go
+        GOOS=darwin GOARCH=arm64 go build -o dist/oget_darwin_arm64 ./cmd/main.go
+        GOOS=windows GOARCH=amd64 go build -o dist/oget_windows_amd64.exe ./cmd/main.go
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
         files: |
           dist/oget_linux_amd64
+          dist/oget_linux_arm64
           dist/oget_darwin_amd64
+          dist/oget_darwin_arm64
           dist/oget_windows_amd64.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

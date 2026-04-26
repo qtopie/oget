@@ -3,7 +3,10 @@
 
 package oget
 
-import "errors"
+import (
+	"errors"
+	"os"
+)
 
 const (
 	tcpCongestion = 0
@@ -17,4 +20,12 @@ func splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (int
 
 func fallocate(fd int, mode uint32, off int64, len int64) error {
 	return errors.New("fallocate is only supported on linux")
+}
+
+func setBBR(fd uintptr) {
+	// Not supported on other platforms
+}
+
+func NewMmapStorageHandler(file *os.File, length int64) (StorageHandler, error) {
+	return nil, errors.New("mmap storage is only supported on linux")
 }

@@ -18,3 +18,7 @@ func splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (int
 func fallocate(fd int, mode uint32, off int64, len int64) error {
 	return unix.Fallocate(fd, mode, off, len)
 }
+
+func setBBR(fd uintptr) {
+	_ = unix.SetsockoptString(int(fd), unix.IPPROTO_TCP, unix.TCP_CONGESTION, "bbr")
+}

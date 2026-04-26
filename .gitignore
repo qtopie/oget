@@ -19,3 +19,4 @@ debug.test
 *.oget
 .task/
 oget+
+dist/
