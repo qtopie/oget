@@ -2,8 +2,10 @@ package oget
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/url"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -146,14 +148,45 @@ func (d *Downloader) spawnWorker(ctx context.Context, wg *sync.WaitGroup) {
 func (d *Downloader) Download(ctx context.Context) {
 	var wg sync.WaitGroup
 
-	// Enhanced Progress Bar without redundant it/s
-	bar := progressbar.NewOptions64(-1,
+	// 1. Pre-download Probing to get TotalSize
+	var totalSize int64
+	var allTasks [][]*ChunkTask
+	var requesters []*Requester
+
+	for _, u := range d.URLs {
+		req := NewRequester(u, d.Config)
+		req.Fetcher = d.Fetcher
+		
+		var urlTasks []*ChunkTask
+		req.SubmitTask = func(t *ChunkTask) {
+			urlTasks = append(urlTasks, t)
+		}
+		
+		if err := req.PrepareTasks(ctx); err != nil {
+			log.Printf("Warning: failed to prepare tasks for %s: %v", u, err)
+			continue
+		}
+		
+		for _, t := range urlTasks {
+			if t.Length > 0 {
+				totalSize += t.Length
+			}
+		}
+		
+		allTasks = append(allTasks, urlTasks)
+		requesters = append(requesters, req)
+	}
+
+	d.TotalSize = totalSize
+
+	// Enhanced Progress Bar
+	bar := progressbar.NewOptions64(totalSize,
 		progressbar.OptionSetDescription("Downloading"),
-		progressbar.OptionSetWriter(log.Writer()),
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionShowBytes(true),
-		progressbar.OptionShowCount(), // Fixed: no arguments
+		progressbar.OptionShowCount(),
 		progressbar.OptionOnCompletion(func() {
-			log.Println("\nDownload finished.")
+			fmt.Fprintln(os.Stderr, "\nDownload finished.")
 		}),
 		progressbar.OptionSetWidth(15),
 		progressbar.OptionShowElapsedTimeOnFinish(),
@@ -164,7 +197,7 @@ func (d *Downloader) Download(ctx context.Context) {
 			BarStart:      "[",
 			BarEnd:        "]",
 		}),
-		progressbar.OptionSetPredictTime(true), // Fixed: correct method name
+		progressbar.OptionSetPredictTime(true),
 	)
 
 	// Start initial workers
@@ -172,21 +205,18 @@ func (d *Downloader) Download(ctx context.Context) {
 		d.spawnWorker(ctx, &wg)
 	}
 
-	// 2. Start Requesters (Producers)
-	var producerWg sync.WaitGroup
-	for _, u := range d.URLs {
-		producerWg.Add(1)
-		go func(urlStr string) {
-			defer producerWg.Done()
-			requester := NewRequester(urlStr, d.Config)
-			requester.Fetcher = d.Fetcher
-			requester.OnProgress = func(n int) {
-				atomic.AddInt64(&d.TotalProcessed, int64(n))
-				_ = bar.Add(n)
-			}
-			requester.SubmitTask = d.addTask
-			_ = requester.PrepareTasks(ctx)
-		}(u)
+	// 2. Submit already prepared tasks
+	for _, urlTasks := range allTasks {
+		// Create a local variable for the progress bar to be used in the closure
+		onProgress := func(n int) {
+			atomic.AddInt64(&d.TotalProcessed, int64(n))
+			_ = bar.Add(n)
+		}
+		
+		for _, t := range urlTasks {
+			t.OnProgress = onProgress
+			d.addTask(t)
+		}
 	}
 
 	// 3. Bandwidth Auto-Tuner
@@ -241,7 +271,6 @@ func (d *Downloader) Download(ctx context.Context) {
 		}()
 	}
 
-	producerWg.Wait()
 	wg.Wait()
 	_ = bar.Finish()
 }
