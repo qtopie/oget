@@ -1,5 +1,7 @@
 # oget
 
+[English](./README.md) | [简体中文](./README_zh.md)
+
 High-performance, parallel network downloader with modern IO techniques (io_uring, mmap, splice).
 
 ## Key Features
