@@ -227,54 +227,75 @@ func NewHttpProber(config *Config) *HttpProber {
 }
 
 func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
 	client := &http.Client{
 		Timeout: time.Second * time.Duration(p.Config.Timeout),
 	}
-	// Try range request to check if supported and get length.
-	req.Header.Set("Range", "bytes=0-0")
+
+	extractMeta := func(resp *http.Response) *ResourceMetadata {
+		meta := &ResourceMetadata{
+			ETag:         resp.Header.Get("ETag"),
+			LastModified: resp.Header.Get("Last-Modified"),
+		}
+		if attr := resp.Header.Get("Content-Length"); attr != "" {
+			if l, err := strconv.ParseInt(attr, 10, 64); err == nil {
+				meta.Size = l
+			}
+		}
+		return meta
+	}
+
+	// 1. Try HEAD with Range (most efficient for probing)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err == nil {
+		req.Header.Set("Range", "bytes=0-0")
+		resp, err := client.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusPartialContent {
+				meta := extractMeta(resp)
+				contentRange := resp.Header.Get("Content-Range")
+				if contentRange != "" {
+					var start, end, total int64
+					fmt.Sscanf(contentRange, "bytes %d-%d/%d", &start, &end, &total)
+					meta.Size = total
+					return meta, nil
+				}
+			}
+		}
+	}
+
+	// 2. Try standard HEAD
+	req, err = http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err == nil {
+		resp, err := client.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return extractMeta(resp), nil
+			}
+		}
+	}
+
+	// 3. Fallback to GET with limit (if HEAD failed or returned 302/405/etc)
+	// We use a limited GET to just see the headers and maybe the first byte
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	// We don't want the whole body yet, just the response headers
 	resp, err := client.Do(req)
 	if err != nil {
+		// If even GET fails, we can't do much
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	etag := resp.Header.Get("ETag")
-	lastModified := resp.Header.Get("Last-Modified")
-
-	if resp.StatusCode == http.StatusPartialContent {
-		contentRange := resp.Header.Get("Content-Range")
-		if contentRange != "" {
-			var start, end, total int64
-			fmt.Sscanf(contentRange, "bytes %d-%d/%d", &start, &end, &total)
-			return &ResourceMetadata{Size: total, ETag: etag, LastModified: lastModified}, nil
-		}
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
+		return extractMeta(resp), nil
 	}
 
-	// Fallback to HEAD without Range
-	req, _ = http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
-	resp, err = client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	etag = resp.Header.Get("ETag")
-	lastModified = resp.Header.Get("Last-Modified")
-
-	if resp.StatusCode == http.StatusOK {
-		attr := resp.Header.Get("Content-Length")
-		if attr != "" {
-			l, err := strconv.ParseInt(attr, 10, 64)
-			return &ResourceMetadata{Size: l, ETag: etag, LastModified: lastModified}, err
-		}
-	}
-
-	return &ResourceMetadata{Size: 0, ETag: etag, LastModified: lastModified}, nil
+	// If we got here, we still return what we have (even if Size 0) to allow direct download attempt
+	return &ResourceMetadata{Size: 0}, nil
 }
 
 // Cleanup removes the state file associated with the resource.

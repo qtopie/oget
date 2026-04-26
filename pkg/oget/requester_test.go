@@ -2,7 +2,9 @@ package oget
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -39,6 +41,32 @@ func TestRequester_ProbeTimeout(t *testing.T) {
 	_, err := r.Prober.Probe(context.Background(), r.Resource)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
+	}
+}
+
+func TestRequester_ProbeFallbackGet(t *testing.T) {
+	// Start a server that returns 405 Method Not Allowed for HEAD
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// GET works
+		w.Header().Set("Content-Length", "12")
+		io.WriteString(w, "Hello World!")
+	}))
+	defer server.Close()
+
+	config := DefaultConfig()
+	r := NewRequester(server.URL, config)
+	
+	meta, err := r.Prober.Probe(context.Background(), r.Resource)
+	if err != nil {
+		t.Fatalf("expected fallback to GET to succeed, got error: %v", err)
+	}
+	
+	if meta.Size != 12 {
+		t.Errorf("got size %d, want 12", meta.Size)
 	}
 }
 
