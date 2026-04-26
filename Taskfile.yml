@@ -66,4 +66,8 @@ tasks:
       # Windows
       - GOOS=windows GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o dist/{{.BINARY_NAME}}_windows_amd64.exe {{.MAIN_PATH}}
       # Packaging
-      - cd dist && for f in *; do tar -czvf "${f}.tar.gz" "$f"; done
+      - cd dist && tar -czvf {{.BINARY_NAME}}_linux_amd64.tar.gz {{.BINARY_NAME}}_linux_amd64
+      - cd dist && tar -czvf {{.BINARY_NAME}}_linux_arm64.tar.gz {{.BINARY_NAME}}_linux_arm64
+      - cd dist && tar -czvf {{.BINARY_NAME}}_darwin_amd64.tar.gz {{.BINARY_NAME}}_darwin_amd64
+      - cd dist && tar -czvf {{.BINARY_NAME}}_darwin_arm64.tar.gz {{.BINARY_NAME}}_darwin_arm64
+      - cd dist && zip {{.BINARY_NAME}}_windows_amd64.zip {{.BINARY_NAME}}_windows_amd64.exe

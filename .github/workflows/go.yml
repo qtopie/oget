@@ -55,14 +55,20 @@ jobs:
         GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/oget_darwin_arm64 ./cmd/main.go
         GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/oget_windows_amd64.exe ./cmd/main.go
 
+    - name: Compress Binaries
+      run: |
+        cd dist
+        tar -czvf oget_linux_amd64.tar.gz oget_linux_amd64
+        tar -czvf oget_linux_arm64.tar.gz oget_linux_arm64
+        tar -czvf oget_darwin_amd64.tar.gz oget_darwin_amd64
+        tar -czvf oget_darwin_arm64.tar.gz oget_darwin_arm64
+        zip oget_windows_amd64.zip oget_windows_amd64.exe
+
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          dist/oget_linux_amd64
-          dist/oget_linux_arm64
-          dist/oget_darwin_amd64
-          dist/oget_darwin_arm64
-          dist/oget_windows_amd64.exe
+          dist/*.tar.gz
+          dist/*.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
