@@ -70,6 +70,32 @@ func TestRequester_ProbeFallbackGet(t *testing.T) {
 	}
 }
 
+func TestRequester_ProbeRedirect(t *testing.T) {
+	// Start a server that redirects to another server
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "12")
+		io.WriteString(w, "Hello World!")
+	}))
+	defer targetServer.Close()
+
+	redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, targetServer.URL, http.StatusFound)
+	}))
+	defer redirectServer.Close()
+
+	config := DefaultConfig()
+	r := NewRequester(redirectServer.URL, config)
+	
+	meta, err := r.Prober.Probe(context.Background(), r.Resource)
+	if err != nil {
+		t.Fatalf("expected redirect to be followed, got error: %v", err)
+	}
+	
+	if meta.Size != 12 {
+		t.Errorf("got size %d, want 12", meta.Size)
+	}
+}
+
 func TestRequester_PrepareTasks(t *testing.T) {
 	server := ogettest.NewSimpleServer()
 	defer server.Close()

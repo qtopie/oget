@@ -43,4 +43,5 @@ func main() {
 	}
 	downloader.Config.Verbose = verbose
 	downloader.Download(context.Background())
+	oget.CleanupProtocols(downloader.Config)
 }

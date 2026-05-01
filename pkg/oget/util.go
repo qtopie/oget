@@ -13,6 +13,19 @@ func parseFileName(uri string) string {
 		return tokens[len(tokens)-1]
 	}
 
+	if strings.ToLower(u.Scheme) == "magnet" {
+		// Try to get display name from 'dn' parameter
+		if dn := u.Query().Get("dn"); dn != "" {
+			return dn
+		}
+		// Fallback to info hash if 'xt' is present
+		xt := u.Query().Get("xt")
+		if strings.HasPrefix(xt, "urn:btih:") {
+			return xt[9:] + ".torrent"
+		}
+		return "magnet_download"
+	}
+
 	path := u.Path
 	if path == "" || path == "/" {
 		return "index.html"

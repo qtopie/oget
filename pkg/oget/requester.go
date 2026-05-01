@@ -39,8 +39,8 @@ func NewRequester(resource string, config *Config) *Requester {
 	}
 	return &Requester{
 		Resource: resource,
-		Fetcher:  NewHttpFetcher(config),
-		Prober:   NewHttpProber(config),
+		Fetcher:  GetFetcher(resource, config),
+		Prober:   GetProber(resource, config),
 		Config:   config,
 	}
 }
@@ -292,6 +292,10 @@ func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, 
 
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
 		return extractMeta(resp), nil
+	}
+	
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("resource not found (404): %s", url)
 	}
 
 	// If we got here, we still return what we have (even if Size 0) to allow direct download attempt

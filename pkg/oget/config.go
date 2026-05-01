@@ -12,29 +12,35 @@ var (
 
 // Config represents the global configuration of oget.
 type Config struct {
-	Concurrency    int    `mapstructure:"concurrency"`
-	MaxConcurrency int    `mapstructure:"max_concurrency"`
-	AutoTune       bool   `mapstructure:"autotune"`        // Enable dynamic bandwidth detection
-	StorageType    string `mapstructure:"storage_type"`    // "file", "db", "uring"
-	StateStoreType string `mapstructure:"state_store_type"` // "json", "bolt", "redis"
-	ManifestPath   string `mapstructure:"manifest_path"`   // Path to save .oget state files
-	ProxyURL       string `mapstructure:"proxy_url"`       // e.g., "http://localhost:8080"
-	Timeout        int    `mapstructure:"timeout"`         // Timeout for network operations in seconds
-	Verbose        bool   `mapstructure:"verbose"`         // Enable detailed logging
+	Concurrency        int    `mapstructure:"concurrency"`
+	MaxConcurrency     int    `mapstructure:"max_concurrency"`
+	AutoTune           bool   `mapstructure:"autotune"`        // Enable dynamic bandwidth detection
+	StorageType        string `mapstructure:"storage_type"`    // "file", "db", "uring"
+	StateStoreType     string `mapstructure:"state_store_type"` // "json", "bolt", "redis"
+	ManifestPath       string `mapstructure:"manifest_path"`   // Path to save .oget state files
+	ProxyURL           string `mapstructure:"proxy_url"`       // e.g., "http://localhost:8080"
+	Timeout            int    `mapstructure:"timeout"`         // Timeout for network operations in seconds
+	Verbose            bool   `mapstructure:"verbose"`         // Enable detailed logging
+	SeedingDuration    int    `mapstructure:"seeding_duration"` // Duration to seed magnet links in seconds after download
+	TrackerURL         string `mapstructure:"tracker_url"`      // URL to fetch tracker list from
+	MagnetProbeTimeout int    `mapstructure:"magnet_probe_timeout"` // Timeout for finding magnet metadata in seconds
 }
 
 // DefaultConfig returns a configuration with default values.
 func DefaultConfig() *Config {
 	return &Config{
-		Concurrency:    8, // Start small if autotune is on
-		MaxConcurrency: 128,
-		AutoTune:       true,
-		StorageType:    "file",
-		StateStoreType: "json",
-		ManifestPath:   ".",
-		ProxyURL:       "",
-		Timeout:        30,
-		Verbose:        false,
+		Concurrency:        8, // Start small if autotune is on
+		MaxConcurrency:     128,
+		AutoTune:           true,
+		StorageType:        "file",
+		StateStoreType:     "json",
+		ManifestPath:       ".",
+		ProxyURL:           "",
+		Timeout:            30,
+		Verbose:            false,
+		SeedingDuration:    30,
+		TrackerURL:         "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
+		MagnetProbeTimeout: 60,
 	}
 }
 
@@ -57,6 +63,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	v.SetDefault("manifest_path", ".")
 	v.SetDefault("proxy_url", "")
 	v.SetDefault("timeout", 30)
+	v.SetDefault("seeding_duration", 30)
+	v.SetDefault("tracker_url", "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt")
+	v.SetDefault("magnet_probe_timeout", 60)
 
 	v.AutomaticEnv() // Read from environment variables
 

@@ -30,6 +30,24 @@ type Fetcher interface {
 	Fetch(ctx context.Context, task *ChunkTask) error
 }
 
+// MultiFetcher attempts multiple fetchers in sequence.
+type MultiFetcher struct {
+	Fetchers []Fetcher
+}
+
+func (f *MultiFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
+	var lastErr error
+	for _, fetcher := range f.Fetchers {
+		err := fetcher.Fetch(ctx, task)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		log.Printf("Fetcher %T failed: %v, trying next...", fetcher, err)
+	}
+	return lastErr
+}
+
 // StorageHandler defines the interface for file operations, allowing for different storage backends.
 type StorageHandler interface {
 	io.ReaderAt
