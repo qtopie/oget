@@ -30,7 +30,7 @@ type Requester struct {
 	Config          *Config
 	OnProgress      func(int)
 	OnChunkComplete func(int, string)
-	SubmitTask      func(*ChunkTask)
+	SubmitTask      func(...*ChunkTask)
 }
 
 func NewRequester(resource string, config *Config) *Requester {
@@ -83,32 +83,40 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 	var state *DownloadState
 	// Try to load existing state
 	if _, err := os.Stat(stateFileName); err == nil {
-		f, err := os.OpenFile(stateFileName, os.O_RDWR, 0666)
+		s, err := LoadState(stateFileName)
 		if err == nil {
-			store := &JSONStateStore{Store: f}
-			s, err := store.Load()
-			if err == nil {
-				// Verify if server file has changed and target file exists
-				if s.FileSize == length && !s.IsServerChanged(etag, lastModified) {
-					if _, err := os.Stat(fileName); err == nil {
-						log.Printf("Found existing state and file for %s, resuming download...", fileName)
-						state = s
-					} else {
-						log.Printf("Target file %s missing, restarting download", fileName)
-					}
+			// Verify if server file has changed and target file exists
+			if s.FileSize == length && !s.IsServerChanged(etag, lastModified) {
+				if _, err := os.Stat(fileName); err == nil {
+					log.Printf("Found existing state and file for %s, resuming download...", fileName)
+					state = s
 				} else {
-					log.Printf("Server file changed or size mismatch, restarting download for %s", fileName)
+					log.Printf("Target file %s missing, restarting download", fileName)
 				}
+			} else {
+				log.Printf("Server file changed or size mismatch, restarting download for %s", fileName)
 			}
-			f.Close()
+			if state == nil {
+				s.Close()
+			}
+		} else {
+			log.Printf("Failed to load existing state: %v", err)
 		}
 	}
 
 	if state == nil {
-		state = NewDownloadState(r.Resource, length, RangeSize)
+		state, err = NewDownloadState(r.Resource, length, RangeSize, stateFileName)
+		if err != nil {
+			return fmt.Errorf("failed to create download state: %w", err)
+		}
 		state.ETag = etag
 		state.LastModified = lastModified
+		// Initial save of metadata
+		if err := state.Save(); err != nil {
+			log.Printf("Warning: failed to save initial state: %v", err)
+		}
 	}
+	defer state.Close()
 
 	log.Printf("Preparing tasks for %s (%s, size: %s, progress: %.2f%%)",
 		r.Resource, fileName, humanizeSize(length), state.PercentComplete())
@@ -143,38 +151,27 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 		if r.OnChunkComplete != nil {
 			r.OnChunkComplete(chunkID, hash)
 		}
-		// Save state to disk
-		sf, err := os.OpenFile(stateFileName, os.O_CREATE|os.O_RDWR, 0666)
-		if err == nil {
-			store := &JSONStateStore{Store: sf}
-			if err := state.Save(store); err != nil {
-				log.Printf("Warning: failed to save download state: %v", err)
-			}
-			sf.Close()
-		}
-	}
-
-	// Helper to submit task
-	submit := func(task *ChunkTask) {
-		if r.SubmitTask != nil {
-			r.SubmitTask(task)
-		}
+		// Metadata (URL, ETag etc) doesn't change per chunk, 
+		// so we don't need to call state.Save() here.
+		// The bitset is already updated via mmap in state.MarkComplete.
 	}
 
 	// Split tasks.
 	if length <= 0 {
 		// Single task for unknown length (no resume support for unknown length yet)
-		submit(&ChunkTask{
-			FileID:          fileName,
-			ChunkID:         0,
-			Offset:          0,
-			Length:          -1, // -1 means until EOF
-			URL:             r.Resource,
-			StorageHandler:  storage,
-			FetcherHandler:  r.Fetcher,
-			OnProgress:      r.OnProgress,
-			OnChunkComplete: onChunkComplete,
-		})
+		task := NewChunkTask()
+		task.FileID = fileName
+		task.ChunkID = 0
+		task.Offset = 0
+		task.Length = -1 // -1 means until EOF
+		task.URL = r.Resource
+		task.StorageHandler = storage
+		task.FetcherHandler = r.Fetcher
+		task.OnProgress = r.OnProgress
+		task.OnChunkComplete = onChunkComplete
+		if r.SubmitTask != nil {
+			r.SubmitTask(task)
+		}
 		return nil
 	}
 
@@ -183,6 +180,12 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 	if length%RangeSize != 0 {
 		chunkCount++
 	}
+
+	batchSize := r.Config.TaskBatchSize
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	var batch []*ChunkTask
 
 	for i := 0; i < chunkCount; i++ {
 		// Skip completed chunks
@@ -202,17 +205,30 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 			chunkLength = length - offset
 		}
 
-		submit(&ChunkTask{
-			FileID:          fileName,
-			ChunkID:         i,
-			Offset:          offset,
-			Length:          chunkLength,
-			URL:             r.Resource,
-			StorageHandler:  storage,
-			FetcherHandler:  r.Fetcher,
-			OnProgress:      r.OnProgress,
-			OnChunkComplete: onChunkComplete,
-		})
+		task := NewChunkTask()
+		task.FileID = fileName
+		task.ChunkID = i
+		task.Offset = offset
+		task.Length = chunkLength
+		task.URL = r.Resource
+		task.StorageHandler = storage
+		task.FetcherHandler = r.Fetcher
+		task.OnProgress = r.OnProgress
+		task.OnChunkComplete = onChunkComplete
+		
+		batch = append(batch, task)
+		if len(batch) >= batchSize {
+			if r.SubmitTask != nil {
+				r.SubmitTask(batch...)
+			}
+			batch = nil
+		}
+	}
+	
+	if len(batch) > 0 {
+		if r.SubmitTask != nil {
+			r.SubmitTask(batch...)
+		}
 	}
 	return nil
 }
@@ -306,9 +322,8 @@ func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, 
 func (r *Requester) Cleanup() {
 	fileName := parseFileName(r.Resource)
 	stateFileName := r.getStateFileName(fileName)
-	if err := os.Remove(stateFileName); err != nil {
-		if !os.IsNotExist(err) {
-			log.Printf("Warning: failed to remove state file %s: %v", stateFileName, err)
-		}
-	}
+	bitsetFileName := "." + fileName + ".oget.bits"
+
+	_ = os.Remove(stateFileName)
+	_ = os.Remove(bitsetFileName)
 }

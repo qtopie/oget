@@ -66,15 +66,20 @@ func (d *Downloader) getHostQueue(host string) chan *ChunkTask {
 	return q
 }
 
-// addTask adds a task to its host-specific queue.
-func (d *Downloader) addTask(task *ChunkTask) {
-	u, err := url.Parse(task.URL)
+// addTask adds tasks to their host-specific queue.
+func (d *Downloader) addTask(tasks ...*ChunkTask) {
+	if len(tasks) == 0 {
+		return
+	}
+	u, err := url.Parse(tasks[0].URL)
 	host := "default"
 	if err == nil {
 		host = u.Host
 	}
 	q := d.getHostQueue(host)
-	q <- task
+	for _, t := range tasks {
+		q <- t
+	}
 }
 
 // spawnWorker starts a new worker goroutine.
@@ -149,6 +154,7 @@ func (d *Downloader) spawnWorker(ctx context.Context, wg *sync.WaitGroup) {
 					task.OnChunkComplete(task.ChunkID, "error")
 				}
 			}
+			ReleaseChunkTask(task)
 		}
 	}()
 }
@@ -162,8 +168,8 @@ func (d *Downloader) PrepareAllTasks(ctx context.Context) ([]*ChunkTask, []*Requ
 		req.Fetcher = d.Fetcher
 
 		var urlTasks []*ChunkTask
-		req.SubmitTask = func(t *ChunkTask) {
-			urlTasks = append(urlTasks, t)
+		req.SubmitTask = func(tasks ...*ChunkTask) {
+			urlTasks = append(urlTasks, tasks...)
 		}
 
 		if err := req.PrepareTasks(ctx); err != nil {
@@ -243,9 +249,8 @@ func (d *Downloader) Download(ctx context.Context) {
 			}
 			tasksWg.Done()
 		}
-		
-		d.addTask(t)
 	}
+	d.addTask(allTasks...)
 
 
 	// 3. Bandwidth Auto-Tuner

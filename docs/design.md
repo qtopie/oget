@@ -4,8 +4,40 @@
 
 ## 1. 核心流程 (Process Flow)
 
-```text
-Arguments (CLI) --> Configuration (Viper) --> Downloader (Orchestrator) --> Requester (Probes) --> ChunkTasks (Units of Work)
+### 1.1 任务分片与并发调度时序图
+
+```d2
+shape: sequence_diagram
+
+Downloader: 调度中心 (Downloader)
+Requester: 任务分析器 (Requester)
+Worker: 工作协程 (Worker)
+Fetcher: 传输层 (Fetcher)
+Storage: 存储后端 (Storage)
+
+# 阶段 1: 任务初始化与分片
+Downloader -> Requester: 1. PrepareTasks(ctx)
+Requester -> Requester: 探测资源 (Probe)
+Requester -> Requester: 物理空间预分配 (fallocate)
+Requester -> Downloader: 2. SubmitTask(ChunkTask)
+Note over Downloader: 将任务加入 Host 专属队列
+
+# 阶段 2: 并发调度
+Downloader -> Downloader: 3. spawnWorker() (根据并发配置)
+Worker -> Downloader: 4. 获取任务 (从队列/Work Stealing)
+Downloader -> Worker: 返回 ChunkTask
+
+# 阶段 3: 执行下载
+Worker -> Fetcher: 5. Fetch(task)
+Fetcher -> Worker: 数据流 (Chunk Data)
+Worker -> Storage: 6. ReadAtFrom(Data)
+Storage -> Storage: 写入磁盘/内存映射
+
+# 阶段 4: 进度更新与资源回收
+Worker -> Downloader: 7. OnChunkComplete
+Downloader -> Downloader: 更新进度条 & 状态持久化
+Downloader -> Worker: 8. ReleaseChunkTask(task)
+Note over Worker: 任务对象归还 Pool
 ```
 
 - **Main 控制流**：启动任务、监控整体进度、处理中断信号并持久化状态。

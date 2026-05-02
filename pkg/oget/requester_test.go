@@ -110,8 +110,8 @@ func TestRequester_PrepareTasks(t *testing.T) {
 	r.Fetcher = &HttpFetcher{Client: &http.Client{}}
 	
 	var tasks []*ChunkTask
-	r.SubmitTask = func(task *ChunkTask) {
-		tasks = append(tasks, task)
+	r.SubmitTask = func(newTasks ...*ChunkTask) {
+		tasks = append(tasks, newTasks...)
 	}
 
 	err := r.PrepareTasks(context.Background())

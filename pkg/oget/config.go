@@ -21,6 +21,7 @@ type Config struct {
 	ProxyURL           string `mapstructure:"proxy_url"`       // e.g., "http://localhost:8080"
 	Timeout            int    `mapstructure:"timeout"`         // Timeout for network operations in seconds
 	Verbose            bool   `mapstructure:"verbose"`         // Enable detailed logging
+	TaskBatchSize      int    `mapstructure:"task_batch_size"` // Number of tasks to submit at once
 	SeedingDuration    int    `mapstructure:"seeding_duration"` // Duration to seed magnet links in seconds after download
 	TrackerURL         string `mapstructure:"tracker_url"`      // URL to fetch tracker list from
 	MagnetProbeTimeout int    `mapstructure:"magnet_probe_timeout"` // Timeout for finding magnet metadata in seconds
@@ -38,6 +39,7 @@ func DefaultConfig() *Config {
 		ProxyURL:           "",
 		Timeout:            30,
 		Verbose:            false,
+		TaskBatchSize:      100,
 		SeedingDuration:    30,
 		TrackerURL:         "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
 		MagnetProbeTimeout: 60,
@@ -63,6 +65,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	v.SetDefault("manifest_path", ".")
 	v.SetDefault("proxy_url", "")
 	v.SetDefault("timeout", 30)
+	v.SetDefault("task_batch_size", 100)
 	v.SetDefault("seeding_duration", 30)
 	v.SetDefault("tracker_url", "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt")
 	v.SetDefault("magnet_probe_timeout", 60)

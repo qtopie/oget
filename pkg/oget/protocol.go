@@ -104,7 +104,8 @@ func CleanupProtocols(config *Config) {
 
 // DispatchFetcher dispatches the fetch request to the appropriate fetcher based on the URL scheme.
 type DispatchFetcher struct {
-	Config *Config
+	Config   *Config
+	fetchers sync.Map // map[string]Fetcher
 }
 
 func NewDispatchFetcher(config *Config) *DispatchFetcher {
@@ -112,7 +113,21 @@ func NewDispatchFetcher(config *Config) *DispatchFetcher {
 }
 
 func (f *DispatchFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
+	u, err := url.Parse(task.URL)
+	scheme := "http"
+	if err == nil {
+		scheme = strings.ToLower(u.Scheme)
+	}
+
+	if fetcher, ok := f.fetchers.Load(scheme); ok {
+		return fetcher.(Fetcher).Fetch(ctx, task)
+	}
+
 	fetcher := GetFetcher(task.URL, f.Config)
+	actual, loaded := f.fetchers.LoadOrStore(scheme, fetcher)
+	if loaded {
+		return actual.(Fetcher).Fetch(ctx, task)
+	}
 	return fetcher.Fetch(ctx, task)
 }
 

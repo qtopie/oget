@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 
@@ -60,14 +61,22 @@ type StorageHandler interface {
 	SpliceFrom(fd uintptr, off int64, count int64) (n int64, err error)
 }
 
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 32*1024)
+	},
+}
+
 // FileStorageHandler wraps *os.File to implement StorageHandler.
 type FileStorageHandler struct {
 	*os.File
 }
 
-// ReadAtFrom implements ReadAtFrom by reading into a buffer and calling WriteAt.
+// ReadAtFrom implements ReadAtFrom by reading into a pooled buffer and calling WriteAt.
 func (f *FileStorageHandler) ReadAtFrom(r io.Reader, off int64, count int64) (int64, error) {
-	buf := make([]byte, 32*1024)
+	buf := bufPool.Get().([]byte)
+	defer bufPool.Put(buf)
+
 	var total int64
 	for total < count {
 		toRead := int64(len(buf))
@@ -120,6 +129,23 @@ func (f *FileStorageHandler) SpliceFrom(fd uintptr, off int64, count int64) (int
 		total += int64(n2)
 	}
 	return total, nil
+}
+
+var chunkTaskPool = sync.Pool{
+	New: func() interface{} {
+		return &ChunkTask{}
+	},
+}
+
+// NewChunkTask creates a new ChunkTask from the pool.
+func NewChunkTask() *ChunkTask {
+	return chunkTaskPool.Get().(*ChunkTask)
+}
+
+// ReleaseChunkTask returns a ChunkTask to the pool.
+func ReleaseChunkTask(t *ChunkTask) {
+	*t = ChunkTask{} // Reset the struct
+	chunkTaskPool.Put(t)
 }
 
 // ChunkTask represents a small piece of a file to be downloaded.

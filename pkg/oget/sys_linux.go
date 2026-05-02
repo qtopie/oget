@@ -3,7 +3,11 @@
 
 package oget
 
-import "golang.org/x/sys/unix"
+import (
+	"os"
+
+	"golang.org/x/sys/unix"
+)
 
 const (
 	tcpCongestion = unix.TCP_CONGESTION
@@ -21,4 +25,12 @@ func fallocate(fd int, mode uint32, off int64, len int64) error {
 
 func setBBR(fd uintptr) {
 	_ = unix.SetsockoptString(int(fd), unix.IPPROTO_TCP, unix.TCP_CONGESTION, "bbr")
+}
+
+func mmapFileOffset(f *os.File, length int, offset int64) ([]byte, error) {
+	return unix.Mmap(int(f.Fd()), offset, length, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+}
+
+func munmapFile(data []byte) error {
+	return unix.Munmap(data)
 }

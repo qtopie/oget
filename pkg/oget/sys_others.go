@@ -26,6 +26,14 @@ func setBBR(fd uintptr) {
 	// Not supported on other platforms
 }
 
+func mmapFileOffset(f *os.File, length int, offset int64) ([]byte, error) {
+	return nil, errors.New("mmap is only supported on linux")
+}
+
+func munmapFile(data []byte) error {
+	return errors.New("munmap is only supported on linux")
+}
+
 func NewMmapStorageHandler(file *os.File, length int64) (StorageHandler, error) {
 	return nil, errors.New("mmap storage is only supported on linux")
 }

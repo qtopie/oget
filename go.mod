@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/anacrolix/torrent v1.61.0
+	github.com/fxamacker/cbor/v2 v2.9.1
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/quic-go/quic-go v0.57.1
 	github.com/schollz/progressbar/v3 v3.19.0
@@ -94,6 +95,7 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/tidwall/btree v1.8.1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	go.etcd.io/bbolt v1.3.6 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.41.0 // indirect
