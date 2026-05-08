@@ -23,8 +23,8 @@ type Config struct {
 	Verbose            bool   `mapstructure:"verbose"`         // Enable detailed logging
 	TaskBatchSize      int    `mapstructure:"task_batch_size"` // Number of tasks to submit at once
 	SeedingDuration    int    `mapstructure:"seeding_duration"` // Duration to seed magnet links in seconds after download
-	TrackerURL         string `mapstructure:"tracker_url"`      // URL to fetch tracker list from
-	MagnetProbeTimeout int    `mapstructure:"magnet_probe_timeout"` // Timeout for finding magnet metadata in seconds
+	TrackerURLs        []string `mapstructure:"tracker_urls"`      // URLs to fetch tracker lists from
+	MagnetProbeTimeout int      `mapstructure:"magnet_probe_timeout"` // Timeout for finding magnet metadata in seconds
 }
 
 // DefaultConfig returns a configuration with default values.
@@ -41,7 +41,10 @@ func DefaultConfig() *Config {
 		Verbose:            false,
 		TaskBatchSize:      100,
 		SeedingDuration:    30,
-		TrackerURL:         "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
+		TrackerURLs: []string{
+			"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
+			"https://raw.githubusercontent.com/adysec/tracker/main/trackers_all.txt",
+		},
 		MagnetProbeTimeout: 60,
 	}
 }
@@ -67,7 +70,10 @@ func LoadConfig(configPath string) (*Config, error) {
 	v.SetDefault("timeout", 30)
 	v.SetDefault("task_batch_size", 100)
 	v.SetDefault("seeding_duration", 30)
-	v.SetDefault("tracker_url", "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt")
+	v.SetDefault("tracker_urls", []string{
+		"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
+		"https://raw.githubusercontent.com/adysec/tracker/main/trackers_all.txt",
+	})
 	v.SetDefault("magnet_probe_timeout", 60)
 
 	v.AutomaticEnv() // Read from environment variables

@@ -14,26 +14,38 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anacrolix/torrent"
+	"github.com/cenkalti/rain/torrent"
 	"github.com/jlaffaye/ftp"
 )
 
 var (
-	torrentClient     *torrent.Client
-	torrentClientOnce sync.Once
-	cachedTrackers    []string
-	trackersOnce      sync.Once
+	rainSession      *torrent.Session
+	rainSessionOnce  sync.Once
+	cachedTrackers   []string
+	trackersOnce     sync.Once
 )
 
 func getTrackers(ctx context.Context, config *Config) []string {
 	trackersOnce.Do(func() {
-		if config != nil && config.TrackerURL != "" {
-			if config.Verbose {
-				log.Printf("[Magnet] Fetching external trackers from: %s", config.TrackerURL)
+		if config != nil && len(config.TrackerURLs) > 0 {
+			var allTrackers []string
+			uniqueTrackers := make(map[string]bool)
+
+			for _, trackerURL := range config.TrackerURLs {
+				if config.Verbose {
+					log.Printf("[Magnet] Fetching external trackers from: %s", trackerURL)
+				}
+				trackers := fetchTrackers(ctx, trackerURL)
+				for _, t := range trackers {
+					if !uniqueTrackers[t] {
+						uniqueTrackers[t] = true
+						allTrackers = append(allTrackers, t)
+					}
+				}
 			}
-			cachedTrackers = fetchTrackers(ctx, config.TrackerURL)
+			cachedTrackers = allTrackers
 			if config.Verbose {
-				log.Printf("[Magnet] Fetched %d external trackers", len(cachedTrackers))
+				log.Printf("[Magnet] Fetched %d unique external trackers from %d sources", len(cachedTrackers), len(config.TrackerURLs))
 			}
 		}
 	})
@@ -71,23 +83,21 @@ func fetchTrackers(ctx context.Context, trackerURL string) []string {
 	return trackers
 }
 
-func getTorrentClient(config *Config) (*torrent.Client, error) {
+func getRainSession(config *Config) (*torrent.Session, error) {
 	var err error
-	torrentClientOnce.Do(func() {
-		cfg := torrent.NewDefaultClientConfig()
-		cfg.DataDir = os.TempDir()
-		if config != nil && !config.Verbose {
-			cfg.NoDefaultPortForwarding = true
-		}
-		torrentClient, err = torrent.NewClient(cfg)
+	rainSessionOnce.Do(func() {
+		cfg := torrent.DefaultConfig
+		cfg.DataDir = filepath.Join(os.TempDir(), "oget_rain")
+		cfg.Database = filepath.Join(os.TempDir(), "oget_rain.db")
+		cfg.TrackerHTTPVerifyTLS = false // Bypass TLS verification for trackers
+		rainSession, err = torrent.NewSession(cfg)
 	})
-	return torrentClient, err
+	return rainSession, err
 }
 
 // CleanupProtocols handles resource cleanup for all protocols.
-// For Magnet links, it implements a configurable seeding grace period before stopping for privacy.
 func CleanupProtocols(config *Config) {
-	if torrentClient != nil {
+	if rainSession != nil {
 		duration := 30
 		if config != nil {
 			duration = config.SeedingDuration
@@ -97,7 +107,7 @@ func CleanupProtocols(config *Config) {
 			fmt.Printf("\n[Magnet] All magnet tasks finished. Seeding for %ds (Privacy Grace Period)...\n", duration)
 			time.Sleep(time.Duration(duration) * time.Second)
 		}
-		torrentClient.Close()
+		rainSession.Close()
 		fmt.Println("[Magnet] Seeding stopped. Privacy secured.")
 	}
 }
@@ -244,8 +254,6 @@ func (f *FtpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 			break
 		}
 
-		// Read from FTP response and write to storage
-		// Note: We use a limited reader to ensure we don't read beyond the chunk length
 		lr := io.LimitReader(resp, remaining)
 		n, err := task.StorageHandler.ReadAtFrom(lr, task.Offset+written, remaining)
 		if n > 0 {
@@ -271,8 +279,6 @@ func (f *FtpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 	}
 
 	if task.OnChunkComplete != nil {
-		// For FTP we don't have a simple way to get chunk hash from server,
-		// so we just signal completion.
 		task.OnChunkComplete(task.ChunkID, "")
 	}
 
@@ -314,6 +320,29 @@ func dialFtp(resource string, timeout int) (*ftp.ServerConn, error) {
 	return c, nil
 }
 
+func addTrackersInBatches(ctx context.Context, t *torrent.Torrent, trackers []string) {
+	go func() {
+		batchSize := 30
+		for i := 0; i < len(trackers); i += batchSize {
+			end := i + batchSize
+			if end > len(trackers) {
+				end = len(trackers)
+			}
+			for _, tr := range trackers[i:end] {
+				_ = t.AddTracker(tr)
+			}
+			
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.NotifyMetadata():
+				return // Stop adding trackers once metadata is found
+			case <-time.After(2 * time.Second): // Delay next batch to prevent file descriptor exhaustion
+			}
+		}
+	}()
+}
+
 // MagnetProber implements Prober for Magnet/BitTorrent protocol.
 type MagnetProber struct {
 	Config *Config
@@ -324,72 +353,47 @@ func NewMagnetProber(config *Config) *MagnetProber {
 }
 
 func (p *MagnetProber) Probe(ctx context.Context, resource string) (*ResourceMetadata, error) {
-	client, err := getTorrentClient(p.Config)
+	session, err := getRainSession(p.Config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create torrent client: %w", err)
+		return nil, fmt.Errorf("failed to create rain session: %w", err)
 	}
 
-	t, err := client.AddMagnet(resource)
+	t, err := session.AddURI(resource, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add magnet: %w", err)
 	}
 
-	// Add external trackers
+	// Add external trackers in batches (limit to 50 max to prevent FD exhaustion)
 	trackers := getTrackers(ctx, p.Config)
 	if len(trackers) > 0 {
-		var groups [][]string
-		for _, tr := range trackers {
-			groups = append(groups, []string{tr})
+		maxTrackers := 50
+		if len(trackers) > maxTrackers {
+			trackers = trackers[:maxTrackers]
 		}
-		t.AddTrackers(groups)
+		addTrackersInBatches(ctx, t, trackers)
 	}
 
-	// Set a timeout for probing metadata
-	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(p.Config.MagnetProbeTimeout)*time.Second)
-	defer cancel()
-
-	if p.Config.Verbose {
-		ticker := time.NewTicker(2 * time.Second)
-		go func() {
-			defer ticker.Stop()
-			for {
-				select {
-				case <-probeCtx.Done():
-					return
-				case <-t.GotInfo():
-					return
-				case <-ticker.C:
-					stats := t.Stats()
-					log.Printf("[Magnet Verbose] Finding metadata... Active Peers: %d, Total Peers: %d", 
-						stats.ActivePeers, stats.TotalPeers)
-				}
-			}
-		}()
-	}
-
+	// Wait for metadata
 	select {
-	case <-probeCtx.Done():
-		if probeCtx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("magnet probe timed out after %ds (no peers found or metadata unavailable)", p.Config.MagnetProbeTimeout)
-		}
-		return nil, probeCtx.Err()
-	case <-t.GotInfo():
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-t.NotifyMetadata():
+	case <-time.After(time.Duration(p.Config.MagnetProbeTimeout) * time.Second):
+		return nil, fmt.Errorf("magnet probe timed out after %ds", p.Config.MagnetProbeTimeout)
 	}
 
-	// For oget, we pick the largest file in the torrent for now
-	var targetFile *torrent.File
-	for _, f := range t.Files() {
-		if targetFile == nil || f.Length() > targetFile.Length() {
-			targetFile = f
-		}
+	files, err := t.Files()
+	if err != nil {
+		return nil, err
 	}
 
-	if targetFile == nil {
-		return nil, fmt.Errorf("no files found in torrent")
+	var totalSize int64
+	for _, f := range files {
+		totalSize += f.Length()
 	}
 
 	return &ResourceMetadata{
-		Size: targetFile.Length(),
+		Size: totalSize,
 	}, nil
 }
 
@@ -403,106 +407,36 @@ func NewMagnetFetcher(config *Config) *MagnetFetcher {
 }
 
 func (f *MagnetFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
-	client, err := getTorrentClient(f.Config)
+	session, err := getRainSession(f.Config)
 	if err != nil {
 		return err
 	}
 
-	t, err := client.AddMagnet(task.URL)
+	t, err := session.AddURI(task.URL, nil)
 	if err != nil {
 		return err
-	}
-
-	// Add external trackers
-	trackers := getTrackers(ctx, f.Config)
-	if len(trackers) > 0 {
-		var groups [][]string
-		for _, tr := range trackers {
-			groups = append(groups, []string{tr})
-		}
-		t.AddTrackers(groups)
 	}
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-t.GotInfo():
+	case <-t.NotifyMetadata():
 	}
 
-	if f.Config.Verbose && task.ChunkID%10 == 0 {
-		stats := t.Stats()
-		log.Printf("[Magnet Verbose] Chunk %d: Connected Peers: %d, Downloaded: %s", 
-			task.ChunkID, stats.ActivePeers, humanizeSize(stats.BytesReadData.Int64()))
-	}
+	t.Start()
 
-	var targetFile *torrent.File
-	for _, fi := range t.Files() {
-		if fi.Length() == task.Length || (task.Length == -1 && fi.Length() > 0) { // Simple heuristic
-			targetFile = fi
-			break
-		}
-	}
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 
-	if targetFile == nil {
-		// Fallback to largest
-		for _, fi := range t.Files() {
-			if targetFile == nil || fi.Length() > targetFile.Length() {
-				targetFile = fi
-			}
-		}
-	}
-
-	reader := targetFile.NewReader()
-	defer reader.Close()
-
-	_, err = reader.Seek(task.Offset, io.SeekStart)
-	if err != nil {
-		return err
-	}
-
-	var written int64
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-		}
-
-		remaining := task.Length - written
-		if task.Length == -1 {
-			remaining = 32 * 1024
-		}
-		if remaining <= 0 && task.Length != -1 {
-			break
-		}
-
-		lr := io.LimitReader(reader, remaining)
-		n, err := task.StorageHandler.ReadAtFrom(lr, task.Offset+written, remaining)
-		if n > 0 {
-			written += n
-			if task.OnProgress != nil {
-				task.OnProgress(int(n))
+		case <-ticker.C:
+			stats := t.Stats()
+			if stats.Bytes.Completed >= task.Length {
+				return nil 
 			}
 		}
-
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
-		}
-		if n == 0 {
-			break
-		}
 	}
-
-	if task.Length != -1 && written < task.Length {
-		return fmt.Errorf("magnet download incomplete: got %d bytes, want %d", written, task.Length)
-	}
-
-	if task.OnChunkComplete != nil {
-		task.OnChunkComplete(task.ChunkID, "")
-	}
-
-	return nil
 }
