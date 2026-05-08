@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -68,6 +69,8 @@ func (r *Requester) createStorageHandler(file *os.File, length int64) (StorageHa
 
 // PrepareTasks probes the resource and splits it into ChunkTasks.
 func (r *Requester) PrepareTasks(ctx context.Context) error {
+	isBitTorrent := strings.HasPrefix(strings.ToLower(r.Resource), "magnet:") || isTorrentResource(r.Resource)
+
 	meta, err := r.Prober.Probe(ctx, r.Resource)
 	if err != nil {
 		return fmt.Errorf("failed to probe resource %s: %w", r.Resource, err)
@@ -121,28 +124,31 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 	log.Printf("Preparing tasks for %s (%s, size: %s, progress: %.2f%%)",
 		r.Resource, fileName, humanizeSize(length), state.PercentComplete())
 
-	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0666)
-	if err != nil {
-		return fmt.Errorf("failed to create/open file %s: %w", fileName, err)
-	}
+	var storage StorageHandler
+	if !isBitTorrent {
+		file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0666)
+		if err != nil {
+			return fmt.Errorf("failed to create/open file %s: %w", fileName, err)
+		}
 
-	// Ensure file has enough space if length is known.
-	if length > 0 {
-		// Priority 1: Use fallocate for physical pre-allocation (best performance)
-		if err := fallocate(int(file.Fd()), 0, 0, length); err != nil {
-			log.Printf("Warning: fallocate failed for %s, falling back to truncate: %v", fileName, err)
-			// Priority 2: Fallback to Truncate (Sparse file)
-			if err := file.Truncate(length); err != nil {
-				log.Printf("Error: failed to truncate file %s: %v", fileName, err)
+		// Ensure file has enough space if length is known.
+		if length > 0 {
+			// Priority 1: Use fallocate for physical pre-allocation (best performance)
+			if err := fallocate(int(file.Fd()), 0, 0, length); err != nil {
+				log.Printf("Warning: fallocate failed for %s, falling back to truncate: %v", fileName, err)
+				// Priority 2: Fallback to Truncate (Sparse file)
+				if err := file.Truncate(length); err != nil {
+					log.Printf("Error: failed to truncate file %s: %v", fileName, err)
+				}
 			}
 		}
-	}
 
-	// Choose the appropriate storage handler (standard, uring, mmap)
-	storage, err := r.createStorageHandler(file, length)
-	if err != nil {
-		log.Printf("Failed to create preferred storage handler, fallback to standard file: %v", err)
-		storage = &FileStorageHandler{File: file}
+		// Choose the appropriate storage handler (standard, uring, mmap)
+		storage, err = r.createStorageHandler(file, length)
+		if err != nil {
+			log.Printf("Failed to create preferred storage handler, fallback to standard file: %v", err)
+			storage = &FileStorageHandler{File: file}
+		}
 	}
 
 	// Define a common OnChunkComplete that saves state
@@ -157,6 +163,24 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 	}
 
 	// Split tasks.
+	if isBitTorrent {
+		// Single task for BitTorrent (which handles its own internal concurrency/P2P)
+		task := NewChunkTask()
+		task.FileID = fileName
+		task.ChunkID = 0
+		task.Offset = 0
+		task.Length = length
+		task.URL = r.Resource
+		task.StorageHandler = storage
+		task.FetcherHandler = r.Fetcher
+		task.OnProgress = r.OnProgress
+		task.OnChunkComplete = onChunkComplete
+		if r.SubmitTask != nil {
+			r.SubmitTask(task)
+		}
+		return nil
+	}
+
 	if length <= 0 {
 		// Single task for unknown length (no resume support for unknown length yet)
 		task := NewChunkTask()

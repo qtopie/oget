@@ -39,6 +39,18 @@ oget -concurrency 64 <URL>
 oget -file output.zip <URL>
 ```
 
+* BitTorrent 与磁力链接支持
+```bash
+# 通过本地种子文件下载
+oget -verbose ./ubuntu.torrent
+
+# 通过远程种子链接下载 (支持复杂的查询参数)
+oget -verbose "https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso.torrent?_gl=1*11tffb8*_gcl_au*MTcxNDM1NTg2Ni4xNzc4MjUzMjgx"
+
+# 通过磁力链接下载
+oget -verbose "magnet:?xt=urn:btih:..."
+```
+
 ## 配置项目 (`oget.json`)
 您可以在工作目录下放置 `oget.json` 来自定义下载器行为：
 ```json

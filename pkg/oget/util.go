@@ -10,7 +10,11 @@ func parseFileName(uri string) string {
 	u, err := url.Parse(uri)
 	if err != nil {
 		tokens := strings.Split(uri, "/")
-		return tokens[len(tokens)-1]
+		name := tokens[len(tokens)-1]
+		if strings.HasSuffix(strings.ToLower(name), ".torrent") {
+			return name[:len(name)-8]
+		}
+		return name
 	}
 
 	if strings.ToLower(u.Scheme) == "magnet" {
@@ -21,7 +25,7 @@ func parseFileName(uri string) string {
 		// Fallback to info hash if 'xt' is present
 		xt := u.Query().Get("xt")
 		if strings.HasPrefix(xt, "urn:btih:") {
-			return xt[9:] + ".torrent"
+			return xt[9:]
 		}
 		return "magnet_download"
 	}
@@ -36,6 +40,11 @@ func parseFileName(uri string) string {
 	if fileName == "" {
 		fileName = "index.html"
 	}
+
+	if strings.HasSuffix(strings.ToLower(fileName), ".torrent") {
+		return fileName[:len(fileName)-8]
+	}
+
 	return fileName
 }
 

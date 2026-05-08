@@ -39,6 +39,18 @@ oget -concurrency 64 <URL>
 oget -file output.zip <URL>
 ```
 
+* BitTorrent & Magnet Support
+```bash
+# Download via local torrent file
+oget -verbose ./ubuntu.torrent
+
+# Download via remote torrent URL (supports complex parameters)
+oget -verbose "https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso.torrent?_gl=1*11tffb8*_gcl_au*MTcxNDM1NTg2Ni4xNzc4MjUzMjgx"
+
+# Download via Magnet link
+oget -verbose "magnet:?xt=urn:btih:..."
+```
+
 ## Configuration (`oget.json`)
 You can place an `oget.json` in your working directory to customize behavior:
 ```json

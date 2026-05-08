@@ -2,6 +2,7 @@ package oget
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -25,6 +26,219 @@ var (
 	trackersOnce     sync.Once
 )
 
+func fetchTorrentContent(ctx context.Context, resource string, timeout int) ([]byte, error) {
+	// Check if it's a local file first
+	if _, err := os.Stat(resource); err == nil {
+		return os.ReadFile(resource)
+	}
+
+	// Otherwise treat as URL
+	u, err := url.Parse(resource)
+	if err != nil {
+		return nil, err
+	}
+
+	if u.Scheme == "" {
+		return nil, fmt.Errorf("invalid resource: %s (file not found or invalid URL)", resource)
+	}
+
+	client := &http.Client{
+		Timeout: time.Duration(timeout) * time.Second,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", resource, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch torrent: %s", resp.Status)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Optimization: Save the remote .torrent file to current directory for future use
+	torrentFileName := filepath.Base(u.Path)
+	if torrentFileName == "" || torrentFileName == "." || torrentFileName == "/" {
+		torrentFileName = "download.torrent"
+	}
+	if !strings.HasSuffix(strings.ToLower(torrentFileName), ".torrent") {
+		torrentFileName += ".torrent"
+	}
+
+	if _, err := os.Stat(torrentFileName); os.IsNotExist(err) {
+		_ = os.WriteFile(torrentFileName, data, 0644)
+		log.Printf("[BitTorrent] Saved remote torrent file to: %s", torrentFileName)
+	}
+
+	return data, nil
+}
+
+// TorrentProber implements Prober for .torrent files.
+type TorrentProber struct {
+	Config *Config
+}
+
+func NewTorrentProber(config *Config) *TorrentProber {
+	return &TorrentProber{Config: config}
+}
+
+func (p *TorrentProber) Probe(ctx context.Context, resource string) (*ResourceMetadata, error) {
+	data, err := fetchTorrentContent(ctx, resource, p.Config.Timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	session, err := getRainSession(p.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	var t *torrent.Torrent
+	t, err = session.AddTorrent(bytes.NewReader(data), nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "already added") {
+			for _, existing := range session.ListTorrents() {
+				t = existing
+				break
+			}
+		} else {
+			return nil, fmt.Errorf("failed to add torrent: %w", err)
+		}
+	}
+
+	if t == nil {
+		return nil, fmt.Errorf("failed to add or find torrent")
+	}
+
+	// Add external trackers to boost discovery
+	extTrackers := getTrackers(ctx, p.Config)
+	if len(extTrackers) > 0 {
+		maxTrackers := 200
+		if len(extTrackers) > maxTrackers {
+			extTrackers = extTrackers[:maxTrackers]
+		}
+		addTrackersInBatches(ctx, t, extTrackers, p.Config.Verbose)
+	}
+
+	files, err := t.Files()
+	if err != nil {
+		return nil, err
+	}
+
+	var totalSize int64
+	for _, f := range files {
+		totalSize += f.Length()
+	}
+
+	return &ResourceMetadata{
+		Size: totalSize,
+	}, nil
+}
+
+// TorrentFetcher implements Fetcher for .torrent files.
+type TorrentFetcher struct {
+	Config *Config
+}
+
+func NewTorrentFetcher(config *Config) *TorrentFetcher {
+	return &TorrentFetcher{Config: config}
+}
+
+func (f *TorrentFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
+	session, err := getRainSession(f.Config)
+	if err != nil {
+		return err
+	}
+
+	// Try to find if already added
+	var t *torrent.Torrent
+	data, err := fetchTorrentContent(ctx, task.URL, f.Config.Timeout)
+	if err != nil {
+		return err
+	}
+
+	t, err = session.AddTorrent(bytes.NewReader(data), nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "already added") {
+			for _, existing := range session.ListTorrents() {
+				t = existing
+				break
+			}
+		} else {
+			return err
+		}
+	}
+
+	if t == nil {
+		return fmt.Errorf("failed to add or find torrent for %s", task.URL)
+	}
+
+	// Add external trackers to boost discovery
+	extTrackers := getTrackers(ctx, f.Config)
+	if len(extTrackers) > 0 {
+		maxTrackers := 200
+		if len(extTrackers) > maxTrackers {
+			extTrackers = extTrackers[:maxTrackers]
+		}
+		addTrackersInBatches(ctx, t, extTrackers, f.Config.Verbose)
+	}
+
+	t.Start()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	lastCompleted := t.Stats().Bytes.Completed
+	if task.OnProgress != nil && lastCompleted > 0 {
+		// Report initial progress for resumption
+		task.OnProgress(int(lastCompleted))
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			stats := t.Stats()
+			
+			// Report delta progress to oget bar
+			newCompleted := stats.Bytes.Completed
+			if task.OnProgress != nil && newCompleted > lastCompleted {
+				task.OnProgress(int(newCompleted - lastCompleted))
+				lastCompleted = newCompleted
+			}
+
+			if f.Config.Verbose {
+				trackers := t.Trackers()
+				working := 0
+				for _, tr := range trackers {
+					if tr.Error == nil && !tr.LastAnnounce.IsZero() {
+						working++
+					}
+				}
+				log.Printf("[Torrent] Download stats... Peers: %d, Trackers: %d/%d working, Speed: %d KB/s, Progress: %d/%d", 
+					stats.Peers.Total, working, len(trackers), stats.Speed.Download/1024, stats.Bytes.Completed, task.Length)
+			}
+			if stats.Bytes.Completed >= task.Length {
+				if task.OnChunkComplete != nil {
+					task.OnChunkComplete(task.ChunkID, "")
+				}
+				return nil 
+			}
+		}
+	}
+}
+
 func getTrackers(ctx context.Context, config *Config) []string {
 	trackersOnce.Do(func() {
 		if config != nil && len(config.TrackerURLs) > 0 {
@@ -33,7 +247,7 @@ func getTrackers(ctx context.Context, config *Config) []string {
 
 			for _, trackerURL := range config.TrackerURLs {
 				if config.Verbose {
-					log.Printf("[Magnet] Fetching external trackers from: %s", trackerURL)
+					log.Printf("[BitTorrent] Fetching external trackers from: %s", trackerURL)
 				}
 				trackers := fetchTrackers(ctx, trackerURL)
 				for _, t := range trackers {
@@ -45,7 +259,7 @@ func getTrackers(ctx context.Context, config *Config) []string {
 			}
 			cachedTrackers = allTrackers
 			if config.Verbose {
-				log.Printf("[Magnet] Fetched %d unique external trackers from %d sources", len(cachedTrackers), len(config.TrackerURLs))
+				log.Printf("[BitTorrent] Fetched %d unique external trackers from %d sources", len(cachedTrackers), len(config.TrackerURLs))
 			}
 		}
 	})
@@ -86,13 +300,63 @@ func fetchTrackers(ctx context.Context, trackerURL string) []string {
 func getRainSession(config *Config) (*torrent.Session, error) {
 	var err error
 	rainSessionOnce.Do(func() {
+		// 1. Setup user-level metadata directory
+		home, _ := os.UserHomeDir()
+		metaDir := filepath.Join(home, ".oget", "bt")
+		if err := os.MkdirAll(metaDir, 0755); err != nil {
+			log.Printf("Warning: failed to create BitTorrent metadata directory at %s: %v", metaDir, err)
+			// Fallback to local if home is not accessible for some reason
+			metaDir = ".oget_bt"
+			_ = os.MkdirAll(metaDir, 0755)
+		}
+
 		cfg := torrent.DefaultConfig
-		cfg.DataDir = filepath.Join(os.TempDir(), "oget_rain")
-		cfg.Database = filepath.Join(os.TempDir(), "oget_rain.db")
+		cfg.DataDir = "." // Download directly to current directory for consistency
+		cfg.Database = filepath.Join(metaDir, "session.db")
 		cfg.TrackerHTTPVerifyTLS = false // Bypass TLS verification for trackers
 		rainSession, err = torrent.NewSession(cfg)
+
+		if err == nil {
+			// 2. Start the janitor goroutine to clean up old records
+			go startJanitor(rainSession)
+		}
 	})
 	return rainSession, err
+}
+
+// startJanitor periodically cleans up download records older than 30 days.
+func startJanitor(s *torrent.Session) {
+	// Run cleanup once at start and then every 24 hours
+	cleanup := func() {
+		now := time.Now()
+		expiration := 30 * 24 * time.Hour
+		torrents := s.ListTorrents()
+		
+		removedCount := 0
+		for _, t := range torrents {
+			// If torrent was added more than 30 days ago
+			if now.Sub(t.AddedAt()) > expiration {
+				// We only remove if it's not currently downloading/active? 
+				// Actually, if it's been there for 30 days, we remove the "record".
+				// Rain's RemoveTorrent only removes it from the database, not the disk data.
+				err := s.RemoveTorrent(t.ID())
+				if err == nil {
+					removedCount++
+				}
+			}
+		}
+		if removedCount > 0 {
+			log.Printf("[BitTorrent] Janitor: Cleaned up %d old download records (older than 30 days)", removedCount)
+		}
+	}
+
+	cleanup() // Run once on startup
+
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		cleanup()
+	}
 }
 
 // CleanupProtocols handles resource cleanup for all protocols.
@@ -102,16 +366,15 @@ func CleanupProtocols(config *Config) {
 		if config != nil {
 			duration = config.SeedingDuration
 		}
-		
+
 		if duration > 0 {
-			fmt.Printf("\n[Magnet] All magnet tasks finished. Seeding for %ds (Privacy Grace Period)...\n", duration)
+			fmt.Printf("\n[BitTorrent] All tasks finished. Seeding for %ds (Privacy Grace Period)...\n", duration)
 			time.Sleep(time.Duration(duration) * time.Second)
 		}
 		rainSession.Close()
-		fmt.Println("[Magnet] Seeding stopped. Privacy secured.")
+		fmt.Println("[BitTorrent] Seeding stopped. Privacy secured.")
 	}
 }
-
 // DispatchFetcher dispatches the fetch request to the appropriate fetcher based on the URL scheme.
 type DispatchFetcher struct {
 	Config   *Config
@@ -141,8 +404,24 @@ func (f *DispatchFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 	return fetcher.Fetch(ctx, task)
 }
 
+func isTorrentResource(resource string) bool {
+	lowerRes := strings.ToLower(resource)
+	if strings.HasSuffix(lowerRes, ".torrent") {
+		return true
+	}
+	u, err := url.Parse(resource)
+	if err != nil {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(u.Path), ".torrent")
+}
+
 // GetProber returns the appropriate Prober for the given resource.
 func GetProber(resource string, config *Config) Prober {
+	if isTorrentResource(resource) {
+		return NewTorrentProber(config)
+	}
+
 	u, err := url.Parse(resource)
 	if err != nil {
 		return NewHttpProber(config)
@@ -160,6 +439,10 @@ func GetProber(resource string, config *Config) Prober {
 
 // GetFetcher returns the appropriate Fetcher for the given resource.
 func GetFetcher(resource string, config *Config) Fetcher {
+	if isTorrentResource(resource) {
+		return NewTorrentFetcher(config)
+	}
+
 	u, err := url.Parse(resource)
 	if err != nil {
 		return NewHttpFetcher(config)
@@ -320,7 +603,7 @@ func dialFtp(resource string, timeout int) (*ftp.ServerConn, error) {
 	return c, nil
 }
 
-func addTrackersInBatches(ctx context.Context, t *torrent.Torrent, trackers []string) {
+func addTrackersInBatches(ctx context.Context, t *torrent.Torrent, trackers []string, verbose bool) {
 	go func() {
 		batchSize := 30
 		for i := 0; i < len(trackers); i += batchSize {
@@ -330,6 +613,9 @@ func addTrackersInBatches(ctx context.Context, t *torrent.Torrent, trackers []st
 			}
 			for _, tr := range trackers[i:end] {
 				_ = t.AddTracker(tr)
+				if verbose {
+					log.Printf("[BitTorrent] Added tracker: %s", tr)
+				}
 			}
 			
 			select {
@@ -363,38 +649,57 @@ func (p *MagnetProber) Probe(ctx context.Context, resource string) (*ResourceMet
 		return nil, fmt.Errorf("failed to add magnet: %w", err)
 	}
 
-	// Add external trackers in batches (limit to 50 max to prevent FD exhaustion)
+	// Add external trackers in batches (limit to 200 max to prevent FD exhaustion)
 	trackers := getTrackers(ctx, p.Config)
 	if len(trackers) > 0 {
-		maxTrackers := 50
+		maxTrackers := 200
 		if len(trackers) > maxTrackers {
 			trackers = trackers[:maxTrackers]
 		}
-		addTrackersInBatches(ctx, t, trackers)
+		addTrackersInBatches(ctx, t, trackers, p.Config.Verbose)
 	}
 
 	// Wait for metadata
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-t.NotifyMetadata():
-	case <-time.After(time.Duration(p.Config.MagnetProbeTimeout) * time.Second):
-		return nil, fmt.Errorf("magnet probe timed out after %ds", p.Config.MagnetProbeTimeout)
-	}
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	
+	timeout := time.After(time.Duration(p.Config.MagnetProbeTimeout) * time.Second)
 
-	files, err := t.Files()
-	if err != nil {
-		return nil, err
-	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-t.NotifyMetadata():
+			files, err := t.Files()
+			if err != nil {
+				return nil, err
+			}
 
-	var totalSize int64
-	for _, f := range files {
-		totalSize += f.Length()
-	}
+			var totalSize int64
+			for _, f := range files {
+				totalSize += f.Length()
+			}
 
-	return &ResourceMetadata{
-		Size: totalSize,
-	}, nil
+			return &ResourceMetadata{
+				Size: totalSize,
+			}, nil
+		case <-ticker.C:
+			if p.Config.Verbose {
+				stats := t.Stats()
+				trackers := t.Trackers()
+				working := 0
+				for _, tr := range trackers {
+					if tr.Error == nil && !tr.LastAnnounce.IsZero() {
+						working++
+					}
+				}
+				log.Printf("[BitTorrent] Probing metadata... Peers: %d, Trackers: %d/%d working, DHT: %d nodes", 
+					stats.Peers.Total, working, len(trackers), stats.Addresses.DHT)
+			}
+		case <-timeout:
+			return nil, fmt.Errorf("magnet probe timed out after %ds", p.Config.MagnetProbeTimeout)
+		}
+	}
 }
 
 // MagnetFetcher implements Fetcher for Magnet/BitTorrent protocol.
@@ -428,13 +733,41 @@ func (f *MagnetFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	lastCompleted := t.Stats().Bytes.Completed
+	if task.OnProgress != nil && lastCompleted > 0 {
+		// Report initial progress for resumption
+		task.OnProgress(int(lastCompleted))
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
 			stats := t.Stats()
+			
+			// Report delta progress to oget bar
+			newCompleted := stats.Bytes.Completed
+			if task.OnProgress != nil && newCompleted > lastCompleted {
+				task.OnProgress(int(newCompleted - lastCompleted))
+				lastCompleted = newCompleted
+			}
+
+			if f.Config.Verbose {
+				trackers := t.Trackers()
+				working := 0
+				for _, tr := range trackers {
+					if tr.Error == nil && !tr.LastAnnounce.IsZero() {
+						working++
+					}
+				}
+				log.Printf("[Magnet] Download stats... Peers: %d, Trackers: %d/%d working, Speed: %d KB/s, Progress: %d/%d", 
+					stats.Peers.Total, working, len(trackers), stats.Speed.Download/1024, stats.Bytes.Completed, task.Length)
+			}
 			if stats.Bytes.Completed >= task.Length {
+				if task.OnChunkComplete != nil {
+					task.OnChunkComplete(task.ChunkID, "")
+				}
 				return nil 
 			}
 		}
