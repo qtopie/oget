@@ -19,12 +19,12 @@ The file is a CBOR Sequence:
    - "meta": Metadata Map (URL, FileSize, etc.)
    - "bits": Byte String (The completion bitset)
 
-To maintain mmap performance, the "bits" data is padded to start at a 4KB boundary.
+To maintain mmap performance, the "bits" data is padded to start at a 16KB boundary.
 */
 
 const (
 	stateVersion    = 1
-	stateHeaderSize = 4096 // We reserve 4KB for CBOR header + padding
+	stateHeaderSize = 16384 // We reserve 16KB for CBOR header + padding to ensure page alignment for mmap
 )
 
 // DownloadState represents the metadata of a download task.

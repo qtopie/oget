@@ -274,6 +274,7 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 		return err
 	}
 
+	req.Header.Set("User-Agent", "oget/"+Version)
 	rangeHeader := fmt.Sprintf("bytes=%d-%d", task.Offset, task.Offset+task.Length-1)
 	req.Header.Set("Range", rangeHeader)
 

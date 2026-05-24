@@ -287,6 +287,7 @@ func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, 
 	// 1. Try HEAD with Range (most efficient for probing)
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err == nil {
+		req.Header.Set("User-Agent", "oget/"+Version)
 		req.Header.Set("Range", "bytes=0-0")
 		resp, err := client.Do(req)
 		if err == nil {
@@ -307,6 +308,7 @@ func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, 
 	// 2. Try standard HEAD
 	req, err = http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err == nil {
+		req.Header.Set("User-Agent", "oget/"+Version)
 		resp, err := client.Do(req)
 		if err == nil {
 			defer resp.Body.Close()
@@ -322,6 +324,7 @@ func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, 
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", "oget/"+Version)
 	// We don't want the whole body yet, just the response headers
 	resp, err := client.Do(req)
 	if err != nil {
