@@ -6,7 +6,7 @@ require (
 	github.com/cenkalti/rain v1.13.0
 	github.com/fxamacker/cbor/v2 v2.9.1
 	github.com/jlaffaye/ftp v0.2.0
-	github.com/quic-go/quic-go v0.57.1
+	github.com/quic-go/quic-go v0.59.1
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/spf13/viper v1.21.0
 	golang.org/x/net v0.53.0
@@ -59,7 +59,6 @@ require (
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/term v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
-	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	lukechampine.com/blake3 v1.1.6 // indirect
 )
