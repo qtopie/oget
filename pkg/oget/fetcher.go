@@ -34,6 +34,7 @@ type Fetcher interface {
 // MultiFetcher attempts multiple fetchers in sequence.
 type MultiFetcher struct {
 	Fetchers []Fetcher
+	logged   sync.Map
 }
 
 func (f *MultiFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
@@ -44,7 +45,10 @@ func (f *MultiFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 			return nil
 		}
 		lastErr = err
-		log.Printf("Fetcher %T failed: %v, trying next...", fetcher, err)
+		typeName := fmt.Sprintf("%T", fetcher)
+		if _, loaded := f.logged.LoadOrStore(typeName, true); !loaded {
+			log.Printf("Fetcher %s failed: %v, trying next...", typeName, err)
+		}
 	}
 	return lastErr
 }
