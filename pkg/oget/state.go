@@ -43,8 +43,9 @@ type DownloadState struct {
 }
 
 type mmapBitset struct {
-	file *os.File
-	data []byte
+	file   *os.File
+	data   []byte
+	isMmap bool
 }
 
 // NewDownloadState creates a new state file using CBOR.
@@ -74,14 +75,20 @@ func NewDownloadState(url string, fileSize, chunkSize int64, statePath string) (
 	
 	// Map the bitset part (starting from 4096)
 	data, err := mmapFileOffset(f, int(numBytes), stateHeaderSize)
+	isMmap := true
 	if err != nil {
-		f.Close()
-		return nil, err
+		data = make([]byte, numBytes)
+		if _, wErr := f.WriteAt(data, stateHeaderSize); wErr != nil {
+			f.Close()
+			return nil, wErr
+		}
+		isMmap = false
 	}
 	
 	s.bitset = &mmapBitset{
-		file: f,
-		data: data,
+		file:   f,
+		data:   data,
+		isMmap: isMmap,
 	}
 	
 	return s, nil
@@ -116,14 +123,20 @@ func LoadState(statePath string) (*DownloadState, error) {
 	numBytes := (numChunks + 7) / 8
 	
 	data, err := mmapFileOffset(f, int(numBytes), stateHeaderSize)
+	isMmap := true
 	if err != nil {
-		f.Close()
-		return nil, err
+		data = make([]byte, numBytes)
+		if _, rErr := f.ReadAt(data, stateHeaderSize); rErr != nil && rErr != io.EOF {
+			f.Close()
+			return nil, rErr
+		}
+		isMmap = false
 	}
 	
 	state.bitset = &mmapBitset{
-		file: f,
-		data: data,
+		file:   f,
+		data:   data,
+		isMmap: isMmap,
 	}
 	
 	return &state, nil
@@ -139,6 +152,9 @@ func (s *DownloadState) MarkComplete(chunkID int, hash string) {
 	if s.bitset != nil && byteIdx < len(s.bitset.data) {
 		s.bitset.data[byteIdx] |= (1 << bitIdx)
 		s.UpdatedAt = time.Now()
+		if !s.bitset.isMmap {
+			_, _ = s.bitset.file.WriteAt([]byte{s.bitset.data[byteIdx]}, int64(stateHeaderSize+byteIdx))
+		}
 	}
 }
 
@@ -219,7 +235,10 @@ func (s *DownloadState) Close() error {
 	defer s.mu.Unlock()
 
 	if s.bitset != nil {
-		err := munmapFile(s.bitset.data)
+		var err error
+		if s.bitset.isMmap {
+			err = munmapFile(s.bitset.data)
+		}
 		s.bitset.file.Close()
 		s.bitset = nil
 		return err
