@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"net"
@@ -168,6 +169,7 @@ type ChunkTask struct {
 // HttpFetcher implements Fetcher for HTTP protocol.
 type HttpFetcher struct {
 	Client *http.Client
+	Config *Config
 }
 
 // NewHttpFetcher creates a new HttpFetcher with BBR, Keepalive, H2, H3 and Proxy support.
@@ -250,6 +252,7 @@ func NewHttpFetcher(config *Config) *HttpFetcher {
 
 	return &HttpFetcher{
 		Client: client,
+		Config: config,
 	}
 }
 
@@ -292,7 +295,13 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	hash := sha256.New()
+	var h hash.Hash
+	var body io.Reader = resp.Body
+	if f.Config != nil && f.Config.Checksum {
+		h = sha256.New()
+		body = io.TeeReader(resp.Body, h)
+	}
+
 	var written int64
 	for {
 		select {
@@ -309,7 +318,7 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 			break
 		}
 
-		n, err := task.StorageHandler.ReadAtFrom(io.TeeReader(resp.Body, hash), task.Offset+written, remaining)
+		n, err := task.StorageHandler.ReadAtFrom(body, task.Offset+written, remaining)
 		if n > 0 {
 			written += n
 			if task.OnProgress != nil {
@@ -330,7 +339,11 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 	}
 
 	if task.OnChunkComplete != nil {
-		task.OnChunkComplete(task.ChunkID, hex.EncodeToString(hash.Sum(nil)))
+		var hashStr string
+		if h != nil {
+			hashStr = hex.EncodeToString(h.Sum(nil))
+		}
+		task.OnChunkComplete(task.ChunkID, hashStr)
 	}
 
 	return nil

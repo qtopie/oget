@@ -25,6 +25,7 @@ type Config struct {
 	SeedingDuration    int    `mapstructure:"seeding_duration"` // Duration to seed magnet links in seconds after download
 	TrackerURLs        []string `mapstructure:"tracker_urls"`      // URLs to fetch tracker lists from
 	MagnetProbeTimeout int      `mapstructure:"magnet_probe_timeout"` // Timeout for finding magnet metadata in seconds
+	Checksum           bool     `mapstructure:"checksum"`             // Enable per-chunk SHA-256 checksum verification
 }
 
 // DefaultConfig returns a configuration with default values.
@@ -46,6 +47,7 @@ func DefaultConfig() *Config {
 			"https://raw.githubusercontent.com/adysec/tracker/main/trackers_all.txt",
 		},
 		MagnetProbeTimeout: 60,
+		Checksum:           false,
 	}
 }
 
@@ -75,6 +77,7 @@ func LoadConfig(configPath string) (*Config, error) {
 		"https://raw.githubusercontent.com/adysec/tracker/main/trackers_all.txt",
 	})
 	v.SetDefault("magnet_probe_timeout", 60)
+	v.SetDefault("checksum", false)
 
 	v.AutomaticEnv() // Read from environment variables
 
