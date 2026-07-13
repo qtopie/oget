@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -266,10 +267,21 @@ func NewHttpProber(config *Config) *HttpProber {
 	return &HttpProber{Config: config}
 }
 
-func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, error) {
-	client := &http.Client{
-		Timeout: time.Second * time.Duration(p.Config.Timeout),
+func (p *HttpProber) httpClient() *http.Client {
+	transport := &http.Transport{}
+	if p.Config != nil && p.Config.ProxyURL != "" {
+		if proxyURL, err := url.Parse(p.Config.ProxyURL); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
 	}
+	return &http.Client{
+		Timeout:   time.Second * time.Duration(p.Config.Timeout),
+		Transport: transport,
+	}
+}
+
+func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, error) {
+	client := p.httpClient()
 
 	extractMeta := func(resp *http.Response) *ResourceMetadata {
 		meta := &ResourceMetadata{
