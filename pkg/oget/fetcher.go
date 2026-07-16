@@ -64,6 +64,8 @@ type StorageHandler interface {
 	ReadAtFrom(r io.Reader, off int64, count int64) (n int64, err error)
 	// SpliceFrom splices data from a raw file descriptor (e.g., a socket) directly.
 	SpliceFrom(fd uintptr, off int64, count int64) (n int64, err error)
+	// Sync ensures all written data is flushed to the underlying storage medium.
+	Sync() error
 }
 
 var bufPool = sync.Pool{
@@ -164,7 +166,12 @@ type ChunkTask struct {
 	FetcherHandler  Fetcher
 	OnProgress      func(bytesRead int)
 	OnChunkComplete func(chunkID int, hash string)
+	Retries         int   // Number of times this chunk has been retried
+	Written         int64 // Bytes already written to storage (used for resume on retry)
 }
+
+// MaxFetchRetries is the maximum number of times a chunk fetch will be retried on failure.
+const MaxFetchRetries = 3
 
 // HttpFetcher implements Fetcher for HTTP protocol.
 type HttpFetcher struct {
@@ -275,6 +282,9 @@ func (h *hybridRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 // Fetch executes a single ChunkTask with context support.
+// On partial success (error with written > 0), task.Written is updated so the
+// caller can retry with Range starting from task.Offset+task.Written, skipping
+// bytes already written to storage.
 func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, task.URL, nil)
 	if err != nil {
@@ -282,7 +292,11 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 	}
 
 	req.Header.Set("User-Agent", "oget/"+Version)
-	rangeHeader := fmt.Sprintf("bytes=%d-%d", task.Offset, task.Offset+task.Length-1)
+	// Resume from task.Written if this is a retry — the first `Written` bytes
+	// were already written to storage by a previous attempt and need not be re-downloaded.
+	rangeStart := task.Offset + task.Written
+	rangeEnd := task.Offset + task.Length - 1
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd)
 	req.Header.Set("Range", rangeHeader)
 
 	resp, err := f.Client.Do(req)
@@ -297,12 +311,15 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 
 	var h hash.Hash
 	var body io.Reader = resp.Body
-	if f.Config != nil && f.Config.Checksum {
+	// Only compute SHA-256 when downloading the full chunk from scratch.
+	// When resuming (task.Written > 0), the data stream only covers the
+	// remaining bytes, so a partial hash would be meaningless.
+	if f.Config != nil && f.Config.Checksum && task.Written == 0 {
 		h = sha256.New()
 		body = io.TeeReader(resp.Body, h)
 	}
 
-	var written int64
+	written := task.Written
 	for {
 		select {
 		case <-ctx.Done():
@@ -328,6 +345,7 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 
 		if err != nil {
 			if err != io.EOF && err != io.ErrUnexpectedEOF {
+				task.Written = written // save progress for resume
 				return err
 			}
 			break
@@ -335,6 +353,7 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 	}
 
 	if task.Length != -1 && written < task.Length {
+		task.Written = written // save progress for resume
 		return fmt.Errorf("download incomplete: got %d bytes, want %d", written, task.Length)
 	}
 

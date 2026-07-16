@@ -37,8 +37,8 @@ func NewMmapStorageHandler(file *os.File, length int64) (*MmapStorageHandler, er
 }
 
 func (h *MmapStorageHandler) WriteAt(p []byte, off int64) (n int, err error) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	if off < 0 || int(off) >= len(h.data) {
 		return 0, io.ErrShortWrite

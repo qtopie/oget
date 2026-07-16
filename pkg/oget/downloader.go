@@ -147,11 +147,21 @@ func (d *Downloader) spawnWorker(ctx context.Context, wg *sync.WaitGroup) {
 			err := d.Fetcher.Fetch(ctx, task)
 			if err != nil {
 				log.Printf("Error fetching chunk %d for %s: %v", task.ChunkID, task.FileID, err)
-				// If we have an error, we still need to signal that this attempt at the task is "done"
-				// for the WaitGroup, or the downloader will hang.
-				// In a more advanced version, we could re-add the task to the queue here.
-				if task.OnChunkComplete != nil {
-					task.OnChunkComplete(task.ChunkID, "error")
+				task.Retries++
+				if task.Retries < MaxFetchRetries {
+					// Re-enqueue the chunk for retry with the same parameters.
+					// Do NOT call OnChunkComplete — that would mark partial/corrupt data
+					// as complete in the bitset and cause the download to finish with a bad file.
+					retryTask := NewChunkTask()
+					*retryTask = *task // Copy all fields (Retries, StorageHandler, OnChunkComplete, etc.)
+					d.addTask(retryTask)
+				} else {
+					log.Printf("Chunk %d for %s exceeded max retries (%d), file may be corrupt",
+						task.ChunkID, task.FileID, MaxFetchRetries)
+					// Only mark complete after exhausting retries — last resort to avoid hang.
+					if task.OnChunkComplete != nil {
+						task.OnChunkComplete(task.ChunkID, "error")
+					}
 				}
 			}
 			ReleaseChunkTask(task)

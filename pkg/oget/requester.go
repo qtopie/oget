@@ -33,6 +33,7 @@ type Requester struct {
 	OnProgress      func(int)
 	OnChunkComplete func(int, string)
 	SubmitTask      func(...*ChunkTask)
+	storages        []StorageHandler // tracked for Sync/Close on cleanup
 }
 
 func NewRequester(resource string, config *Config) *Requester {
@@ -150,6 +151,7 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 			log.Printf("Failed to create preferred storage handler, fallback to standard file: %v", err)
 			storage = &FileStorageHandler{File: file}
 		}
+		r.storages = append(r.storages, storage)
 	}
 
 	// Define a common OnChunkComplete that saves state
@@ -357,8 +359,19 @@ func (p *HttpProber) Probe(ctx context.Context, url string) (*ResourceMetadata, 
 	return &ResourceMetadata{Size: 0}, nil
 }
 
-// Cleanup removes the state file associated with the resource.
+// Cleanup syncs data to disk and removes the state file associated with the resource.
 func (r *Requester) Cleanup() {
+	// Sync and close all storage handlers to ensure data is flushed (especially for mmap backend)
+	for _, s := range r.storages {
+		if err := s.Sync(); err != nil {
+			log.Printf("Warning: failed to sync storage for %s: %v", r.Resource, err)
+		}
+		if err := s.Close(); err != nil {
+			log.Printf("Warning: failed to close storage for %s: %v", r.Resource, err)
+		}
+	}
+	r.storages = nil
+
 	fileName := parseFileName(r.Resource)
 	stateFileName := r.getStateFileName(fileName)
 	bitsetFileName := "." + fileName + ".oget.bits"
