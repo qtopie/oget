@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -49,7 +50,9 @@ func NewRequester(resource string, config *Config) *Requester {
 }
 
 func (r *Requester) getStateFileName(fileName string) string {
-	return "." + fileName + ".oget"
+	dir := filepath.Dir(fileName)
+	base := filepath.Base(fileName)
+	return filepath.Join(dir, "."+base+".oget")
 }
 
 func (r *Requester) createStorageHandler(file *os.File, length int64) (StorageHandler, error) {
@@ -83,6 +86,9 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 	lastModified := meta.LastModified
 
 	fileName := parseFileName(r.Resource)
+	if r.Config != nil && r.Config.OutputDir != "" && r.Config.OutputDir != "." {
+		fileName = filepath.Join(r.Config.OutputDir, fileName)
+	}
 	stateFileName := r.getStateFileName(fileName)
 
 	var state *DownloadState
@@ -373,8 +379,13 @@ func (r *Requester) Cleanup() {
 	r.storages = nil
 
 	fileName := parseFileName(r.Resource)
+	if r.Config != nil && r.Config.OutputDir != "" && r.Config.OutputDir != "." {
+		fileName = filepath.Join(r.Config.OutputDir, fileName)
+	}
 	stateFileName := r.getStateFileName(fileName)
-	bitsetFileName := "." + fileName + ".oget.bits"
+	dir := filepath.Dir(fileName)
+	base := filepath.Base(fileName)
+	bitsetFileName := filepath.Join(dir, "."+base+".oget.bits")
 
 	_ = os.Remove(stateFileName)
 	_ = os.Remove(bitsetFileName)

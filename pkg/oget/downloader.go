@@ -21,6 +21,10 @@ type Downloader struct {
 	TotalProcessed int64 // Atomic counter for progress
 	TotalSize      int64 // Total size of all files
 
+	// Description is shown as the progress bar label (e.g. "Downloading jaeger").
+	// If empty, defaults to "Downloading".
+	Description string
+
 	// Dynamic Concurrency control
 	activeWorkers     int32
 	targetConcurrency int32
@@ -215,8 +219,12 @@ func (d *Downloader) Download(ctx context.Context) {
 	}
 
 	// Enhanced Progress Bar
+	description := d.Description
+	if description == "" {
+		description = "Downloading"
+	}
 	bar := progressbar.NewOptions64(d.TotalSize,
-		progressbar.OptionSetDescription("Downloading"),
+		progressbar.OptionSetDescription(description),
 		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionShowCount(),

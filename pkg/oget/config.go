@@ -18,6 +18,7 @@ type Config struct {
 	StorageType        string `mapstructure:"storage_type"`    // "file", "db", "uring"
 	StateStoreType     string `mapstructure:"state_store_type"` // "json", "bolt", "redis"
 	ManifestPath       string `mapstructure:"manifest_path"`   // Path to save .oget state files
+	OutputDir          string // Directory to write downloaded files (default: ".")
 	ProxyURL           string `mapstructure:"proxy_url"`       // e.g., "http://localhost:8080"
 	Timeout            int    `mapstructure:"timeout"`         // Timeout for network operations in seconds
 	Verbose            bool   `mapstructure:"verbose"`         // Enable detailed logging
