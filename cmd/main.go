@@ -16,6 +16,7 @@ func main() {
 	var verbose bool
 	var version bool
 	var checksum bool
+	var dnsServer string
 
 	flag.StringVar(&fileName, "file", "", "name or path to save file (only for single URL)")
 	flag.IntVar(&concurrency, "concurrency", 0, "number of concurrent workers (default 8 with autotune, 32 without)")
@@ -23,6 +24,7 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "enable verbose output for dynamic detection")
 	flag.BoolVar(&version, "version", false, "show version information")
 	flag.BoolVar(&checksum, "checksum", false, "enable per-chunk SHA-256 checksum verification")
+	flag.StringVar(&dnsServer, "dns", "", "custom DNS server for BT tracker/peer resolution (e.g. 8.8.8.8 or 8.8.8.8:53)")
 	flag.Parse()
 
 	if version {
@@ -40,6 +42,7 @@ func main() {
 	downloader := oget.NewDownloader(args, concurrency)
 	downloader.Config.Verbose = verbose
 	downloader.Config.Checksum = checksum
+	downloader.Config.DNS = dnsServer
 	if timeout > 0 {
 		downloader.Config.Timeout = timeout
 		// Re-create fetcher with new timeout if it was already created

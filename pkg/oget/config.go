@@ -27,6 +27,7 @@ type Config struct {
 	TrackerURLs        []string `mapstructure:"tracker_urls"`      // URLs to fetch tracker lists from
 	MagnetProbeTimeout int      `mapstructure:"magnet_probe_timeout"` // Timeout for finding magnet metadata in seconds
 	Checksum           bool     `mapstructure:"checksum"`             // Enable per-chunk SHA-256 checksum verification
+	DNS                string   `mapstructure:"dns"`                  // Custom DNS server for BT tracker/peer resolution (e.g. "8.8.8.8:53")
 }
 
 // DefaultConfig returns a configuration with default values.
@@ -41,6 +42,7 @@ func DefaultConfig() *Config {
 		ProxyURL:           "",
 		Timeout:            30,
 		Verbose:            false,
+		DNS:                "",
 		TaskBatchSize:      100,
 		SeedingDuration:    30,
 		TrackerURLs: []string{

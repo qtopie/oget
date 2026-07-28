@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -308,6 +309,21 @@ func getRainSession(config *Config) (*torrent.Session, error) {
 			// Fallback to local if home is not accessible for some reason
 			metaDir = ".oget_bt"
 			_ = os.MkdirAll(metaDir, 0755)
+		}
+
+		// Configure custom DNS resolver if specified in config or fallback to system resolver
+		if config != nil && config.DNS != "" {
+			dnsAddr := config.DNS
+			if !strings.Contains(dnsAddr, ":") {
+				dnsAddr = dnsAddr + ":53"
+			}
+			net.DefaultResolver = &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					d := net.Dialer{Timeout: 5 * time.Second}
+					return d.DialContext(ctx, "udp", dnsAddr)
+				},
+			}
 		}
 
 		cfg := torrent.DefaultConfig
