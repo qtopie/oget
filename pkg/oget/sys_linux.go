@@ -16,7 +16,8 @@ const (
 )
 
 func splice(rfd int, roff *int64, wfd int, woff *int64, len int, flags int) (int64, error) {
-	return unix.Splice(rfd, roff, wfd, woff, len, flags)
+	n, err := unix.Splice(rfd, roff, wfd, woff, len, flags)
+	return int64(n), err
 }
 
 func fallocate(fd int, mode uint32, off int64, len int64) error {
