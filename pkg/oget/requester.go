@@ -75,6 +75,7 @@ func (r *Requester) createStorageHandler(file *os.File, length int64) (StorageHa
 // PrepareTasks probes the resource and splits it into ChunkTasks.
 func (r *Requester) PrepareTasks(ctx context.Context) error {
 	isBitTorrent := strings.HasPrefix(strings.ToLower(r.Resource), "magnet:") || isTorrentResource(r.Resource)
+	isVideoStream := isVideoStreamResource(r.Resource)
 
 	meta, err := r.Prober.Probe(ctx, r.Resource)
 	if err != nil {
@@ -133,7 +134,7 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 		r.Resource, fileName, humanizeSize(length), state.PercentComplete())
 
 	var storage StorageHandler
-	if !isBitTorrent {
+	if !isBitTorrent && !isVideoStream {
 		file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0666)
 		if err != nil {
 			return fmt.Errorf("failed to create/open file %s: %w", fileName, err)
@@ -179,6 +180,24 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 		task.ChunkID = 0
 		task.Offset = 0
 		task.Length = length
+		task.URL = r.Resource
+		task.StorageHandler = storage
+		task.FetcherHandler = r.Fetcher
+		task.OnProgress = r.OnProgress
+		task.OnChunkComplete = onChunkComplete
+		if r.SubmitTask != nil {
+			r.SubmitTask(task)
+		}
+		return nil
+	}
+
+	if isVideoStream {
+		// Single task for video stream (FFmpeg handles download, remux and file creation)
+		task := NewChunkTask()
+		task.FileID = fileName
+		task.ChunkID = 0
+		task.Offset = 0
+		task.Length = -1 // Dynamic size
 		task.URL = r.Resource
 		task.StorageHandler = storage
 		task.FetcherHandler = r.Fetcher

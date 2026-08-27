@@ -294,10 +294,16 @@ func (f *HttpFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 	req.Header.Set("User-Agent", "oget/"+Version)
 	// Resume from task.Written if this is a retry — the first `Written` bytes
 	// were already written to storage by a previous attempt and need not be re-downloaded.
-	rangeStart := task.Offset + task.Written
-	rangeEnd := task.Offset + task.Length - 1
-	rangeHeader := fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd)
-	req.Header.Set("Range", rangeHeader)
+	if task.Length != -1 {
+		rangeStart := task.Offset + task.Written
+		rangeEnd := task.Offset + task.Length - 1
+		rangeHeader := fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd)
+		req.Header.Set("Range", rangeHeader)
+	} else if task.Written > 0 {
+		rangeStart := task.Offset + task.Written
+		rangeHeader := fmt.Sprintf("bytes=%d-", rangeStart)
+		req.Header.Set("Range", rangeHeader)
+	}
 
 	resp, err := f.Client.Do(req)
 	if err != nil {

@@ -27,7 +27,9 @@ type Config struct {
 	TrackerURLs        []string `mapstructure:"tracker_urls"`      // URLs to fetch tracker lists from
 	MagnetProbeTimeout int      `mapstructure:"magnet_probe_timeout"` // Timeout for finding magnet metadata in seconds
 	Checksum           bool     `mapstructure:"checksum"`             // Enable per-chunk SHA-256 checksum verification
-	DNS                string   `mapstructure:"dns"`                  // Custom DNS server for BT tracker/peer resolution (e.g. "8.8.8.8:53")
+	DNS                string            `mapstructure:"dns"`                  // Custom DNS server for BT tracker/peer resolution (e.g. "8.8.8.8:53")
+	FFmpegPath         string            `mapstructure:"ffmpeg_path"`          // Custom path to ffmpeg binary
+	Headers            map[string]string `mapstructure:"headers"`              // Custom HTTP headers to pass to requests/ffmpeg
 }
 
 // DefaultConfig returns a configuration with default values.
@@ -43,6 +45,8 @@ func DefaultConfig() *Config {
 		Timeout:            30,
 		Verbose:            false,
 		DNS:                "",
+		FFmpegPath:         "",
+		Headers:            make(map[string]string),
 		TaskBatchSize:      100,
 		SeedingDuration:    30,
 		TrackerURLs: []string{

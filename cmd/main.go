@@ -5,9 +5,21 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/qtopie/oget/pkg/oget"
 )
+
+type headerList []string
+
+func (h *headerList) String() string {
+	return strings.Join(*h, ", ")
+}
+
+func (h *headerList) Set(val string) error {
+	*h = append(*h, val)
+	return nil
+}
 
 func main() {
 	var fileName string
@@ -17,6 +29,9 @@ func main() {
 	var version bool
 	var checksum bool
 	var dnsServer string
+	var ffmpegPath string
+	var proxyURL string
+	var headers headerList
 
 	// Handle subcommands like 'oget bt clean'
 	if len(os.Args) >= 2 && os.Args[1] == "bt" {
@@ -39,6 +54,10 @@ func main() {
 	flag.BoolVar(&version, "version", false, "show version information")
 	flag.BoolVar(&checksum, "checksum", false, "enable per-chunk SHA-256 checksum verification")
 	flag.StringVar(&dnsServer, "dns", "", "custom DNS server for BT tracker/peer resolution (e.g. 8.8.8.8 or 8.8.8.8:53)")
+	flag.StringVar(&ffmpegPath, "ffmpeg-path", "", "custom path to ffmpeg executable")
+	flag.StringVar(&proxyURL, "proxy", "", "proxy URL (e.g. http://127.0.0.1:7890)")
+	flag.Var(&headers, "H", "custom HTTP header (e.g. -H 'Referer: https://example.com') (can be specified multiple times)")
+	flag.Var(&headers, "header", "custom HTTP header (e.g. --header 'Referer: https://example.com')")
 	flag.Parse()
 
 	if version {
@@ -70,14 +89,28 @@ func main() {
 	downloader.Config.Verbose = verbose
 	downloader.Config.Checksum = checksum
 	downloader.Config.DNS = dnsServer
+	if ffmpegPath != "" {
+		downloader.Config.FFmpegPath = ffmpegPath
+	}
+	if proxyURL != "" {
+		downloader.Config.ProxyURL = proxyURL
+	}
+	if len(headers) > 0 {
+		for _, h := range headers {
+			parts := strings.SplitN(h, ":", 2)
+			if len(parts) == 2 {
+				downloader.Config.Headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			}
+		}
+	}
 	if fileName != "" {
 		downloader.Config.OutputDir = fileName
 	}
 	if timeout > 0 {
 		downloader.Config.Timeout = timeout
-		// Re-create dispatch fetcher with updated timeout
-		downloader.Fetcher = oget.NewDispatchFetcher(downloader.Config)
 	}
+	downloader.Fetcher = oget.NewDispatchFetcher(downloader.Config)
+
 	downloader.Download(context.Background())
 	oget.CleanupProtocols(downloader.Config)
 }

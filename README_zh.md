@@ -51,6 +51,15 @@ oget -verbose "https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.
 oget -verbose "magnet:?xt=urn:btih:..."
 ```
 
+* M3U8 / HLS 视频流下载与转封装 (通过 FFmpeg)
+```bash
+# 下载并自动转封装 M3U8 为 MP4
+oget "https://example.com/live/playlist.m3u8" -file video.mp4
+
+# 携带自定义请求头与 Referer 下载
+oget -H "Referer: https://example.com" -H "User-Agent: Mozilla/5.0" "https://example.com/video.m3u8"
+```
+
 ## 配置项目 (`oget.json`)
 您可以在工作目录下放置 `oget.json` 来自定义下载器行为：
 ```json

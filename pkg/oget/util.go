@@ -11,8 +11,15 @@ func parseFileName(uri string) string {
 	if err != nil {
 		tokens := strings.Split(uri, "/")
 		name := tokens[len(tokens)-1]
-		if strings.HasSuffix(strings.ToLower(name), ".torrent") {
+		lowerName := strings.ToLower(name)
+		if strings.HasSuffix(lowerName, ".torrent") {
 			return name[:len(name)-8]
+		}
+		if strings.HasSuffix(lowerName, ".m3u8") {
+			return name[:len(name)-5] + ".mp4"
+		}
+		if strings.HasSuffix(lowerName, ".mpd") {
+			return name[:len(name)-4] + ".mp4"
 		}
 		return name
 	}
@@ -41,8 +48,15 @@ func parseFileName(uri string) string {
 		fileName = "index.html"
 	}
 
-	if strings.HasSuffix(strings.ToLower(fileName), ".torrent") {
+	lowerFileName := strings.ToLower(fileName)
+	if strings.HasSuffix(lowerFileName, ".torrent") {
 		return fileName[:len(fileName)-8]
+	}
+	if strings.HasSuffix(lowerFileName, ".m3u8") {
+		return fileName[:len(fileName)-5] + ".mp4"
+	}
+	if strings.HasSuffix(lowerFileName, ".mpd") {
+		return fileName[:len(fileName)-4] + ".mp4"
 	}
 
 	return fileName

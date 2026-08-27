@@ -51,6 +51,15 @@ oget -verbose "https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.
 oget -verbose "magnet:?xt=urn:btih:..."
 ```
 
+* M3U8 / HLS Video Stream & Remuxing (via FFmpeg)
+```bash
+# Download and automatically remux M3U8 to MP4
+oget "https://example.com/live/playlist.m3u8" -file video.mp4
+
+# Download stream with custom headers
+oget -H "Referer: https://example.com" -H "User-Agent: Mozilla/5.0" "https://example.com/video.m3u8"
+```
+
 ## Configuration (`oget.json`)
 You can place an `oget.json` in your working directory to customize behavior:
 ```json

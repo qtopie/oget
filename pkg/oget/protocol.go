@@ -467,6 +467,13 @@ func NewDispatchFetcher(config *Config) *DispatchFetcher {
 }
 
 func (f *DispatchFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
+	if isTorrentResource(task.URL) {
+		return NewTorrentFetcher(f.Config).Fetch(ctx, task)
+	}
+	if isVideoStreamResource(task.URL) {
+		return NewFFmpegFetcher(f.Config).Fetch(ctx, task)
+	}
+
 	u, err := url.Parse(task.URL)
 	scheme := "http"
 	if err == nil {
@@ -497,10 +504,26 @@ func isTorrentResource(resource string) bool {
 	return strings.HasSuffix(strings.ToLower(u.Path), ".torrent")
 }
 
+func isVideoStreamResource(resource string) bool {
+	lowerRes := strings.ToLower(resource)
+	if strings.Contains(lowerRes, ".m3u8") || strings.Contains(lowerRes, ".mpd") {
+		return true
+	}
+	u, err := url.Parse(resource)
+	if err != nil {
+		return false
+	}
+	path := strings.ToLower(u.Path)
+	return strings.HasSuffix(path, ".m3u8") || strings.HasSuffix(path, ".mpd")
+}
+
 // GetProber returns the appropriate Prober for the given resource.
 func GetProber(resource string, config *Config) Prober {
 	if isTorrentResource(resource) {
 		return NewTorrentProber(config)
+	}
+	if isVideoStreamResource(resource) {
+		return NewFFmpegProber(config)
 	}
 
 	u, err := url.Parse(resource)
@@ -522,6 +545,9 @@ func GetProber(resource string, config *Config) Prober {
 func GetFetcher(resource string, config *Config) Fetcher {
 	if isTorrentResource(resource) {
 		return NewTorrentFetcher(config)
+	}
+	if isVideoStreamResource(resource) {
+		return NewFFmpegFetcher(config)
 	}
 
 	u, err := url.Parse(resource)
