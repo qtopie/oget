@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +28,23 @@ var (
 	cachedTrackers   []string
 	trackersOnce     sync.Once
 )
+
+func torrentIDFromData(data []byte) string {
+	h := sha1.Sum(data)
+	return fmt.Sprintf("%x", h)
+}
+
+func magnetIDFromURI(uri string) string {
+	u, err := url.Parse(uri)
+	if err == nil {
+		xt := u.Query().Get("xt")
+		if strings.HasPrefix(xt, "urn:btih:") {
+			return strings.ToLower(xt[9:])
+		}
+	}
+	h := sha256.Sum256([]byte(uri))
+	return fmt.Sprintf("%x", h[:20])
+}
 
 func fetchTorrentContent(ctx context.Context, resource string, timeout int) ([]byte, error) {
 	// Check if it's a local file first
@@ -104,16 +123,19 @@ func (p *TorrentProber) Probe(ctx context.Context, resource string) (*ResourceMe
 		return nil, err
 	}
 
-	var t *torrent.Torrent
-	t, err = session.AddTorrent(bytes.NewReader(data), nil)
-	if err != nil {
-		if strings.Contains(err.Error(), "already added") {
-			for _, existing := range session.ListTorrents() {
-				t = existing
-				break
+	torrentID := torrentIDFromData(data)
+	t := session.GetTorrent(torrentID)
+	if t == nil {
+		t, err = session.AddTorrent(bytes.NewReader(data), &torrent.AddTorrentOptions{
+			ID:      torrentID,
+			Stopped: true,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "already added") {
+				t = session.GetTorrent(torrentID)
+			} else {
+				return nil, fmt.Errorf("failed to add torrent: %w", err)
 			}
-		} else {
-			return nil, fmt.Errorf("failed to add torrent: %w", err)
 		}
 	}
 
@@ -161,22 +183,23 @@ func (f *TorrentFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 		return err
 	}
 
-	// Try to find if already added
-	var t *torrent.Torrent
 	data, err := fetchTorrentContent(ctx, task.URL, f.Config.Timeout)
 	if err != nil {
 		return err
 	}
 
-	t, err = session.AddTorrent(bytes.NewReader(data), nil)
-	if err != nil {
-		if strings.Contains(err.Error(), "already added") {
-			for _, existing := range session.ListTorrents() {
-				t = existing
-				break
+	torrentID := torrentIDFromData(data)
+	t := session.GetTorrent(torrentID)
+	if t == nil {
+		t, err = session.AddTorrent(bytes.NewReader(data), &torrent.AddTorrentOptions{
+			ID: torrentID,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "already added") {
+				t = session.GetTorrent(torrentID)
+			} else {
+				return err
 			}
-		} else {
-			return err
 		}
 	}
 
@@ -205,10 +228,23 @@ func (f *TorrentFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 		task.OnProgress(int(lastCompleted))
 	}
 
+	notifyComplete := t.NotifyComplete()
+	notifyStop := t.NotifyStop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case err := <-notifyStop:
+			if err != nil {
+				return fmt.Errorf("torrent stopped with error: %w", err)
+			}
+			return fmt.Errorf("torrent stopped unexpectedly")
+		case <-notifyComplete:
+			if task.OnChunkComplete != nil {
+				task.OnChunkComplete(task.ChunkID, "")
+			}
+			return nil
 		case <-ticker.C:
 			stats := t.Stats()
 			
@@ -230,7 +266,7 @@ func (f *TorrentFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 				log.Printf("[Torrent] Download stats... Peers: %d, Trackers: %d/%d working, Speed: %d KB/s, Progress: %d/%d", 
 					stats.Peers.Total, working, len(trackers), stats.Speed.Download/1024, stats.Bytes.Completed, task.Length)
 			}
-			if stats.Bytes.Completed >= task.Length {
+			if (task.Length > 0 && stats.Bytes.Completed >= task.Length) || (stats.Pieces.Total > 0 && stats.Pieces.Have == stats.Pieces.Total) {
 				if task.OnChunkComplete != nil {
 					task.OnChunkComplete(task.ChunkID, "")
 				}
@@ -267,6 +303,25 @@ func getTrackers(ctx context.Context, config *Config) []string {
 	return cachedTrackers
 }
 
+func isLikelyValidTracker(tr string) bool {
+	u, err := url.Parse(tr)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" && scheme != "udp" {
+		return false
+	}
+	// Avoid https trackers on raw IP addresses as they almost always have TLS cert / handshake errors
+	if scheme == "https" {
+		host := u.Hostname()
+		if net.ParseIP(host) != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func fetchTrackers(ctx context.Context, trackerURL string) []string {
 	if trackerURL == "" {
 		return nil
@@ -291,7 +346,7 @@ func fetchTrackers(ctx context.Context, trackerURL string) []string {
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
+		if line != "" && isLikelyValidTracker(line) {
 			trackers = append(trackers, line)
 		}
 	}
@@ -301,6 +356,10 @@ func fetchTrackers(ctx context.Context, trackerURL string) []string {
 func getRainSession(config *Config) (*torrent.Session, error) {
 	var err error
 	rainSessionOnce.Do(func() {
+		if config == nil || !config.Verbose {
+			torrent.DisableLogging()
+		}
+
 		// 1. Setup user-level metadata directory
 		home, _ := os.UserHomeDir()
 		metaDir := filepath.Join(home, ".oget", "bt")
@@ -328,6 +387,12 @@ func getRainSession(config *Config) (*torrent.Session, error) {
 
 		cfg := torrent.DefaultConfig
 		cfg.DataDir = "." // Download directly to current directory for consistency
+		if config != nil && config.OutputDir != "" && config.OutputDir != "." {
+			cfg.DataDir = config.OutputDir
+		}
+		cfg.DataDirIncludesTorrentID = false
+		cfg.RPCEnabled = false // oget is CLI downloader, disable internal RPC server
+		cfg.DHTPort = 0        // Allow dynamic port assignment to avoid port collision
 		cfg.Database = filepath.Join(metaDir, "session.db")
 		cfg.TrackerHTTPVerifyTLS = false // Bypass TLS verification for trackers
 		rainSession, err = torrent.NewSession(cfg)
@@ -660,9 +725,24 @@ func (p *MagnetProber) Probe(ctx context.Context, resource string) (*ResourceMet
 		return nil, fmt.Errorf("failed to create rain session: %w", err)
 	}
 
-	t, err := session.AddURI(resource, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to add magnet: %w", err)
+	magnetID := magnetIDFromURI(resource)
+	t := session.GetTorrent(magnetID)
+	if t == nil {
+		t, err = session.AddURI(resource, &torrent.AddTorrentOptions{
+			ID:      magnetID,
+			Stopped: true,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "already added") {
+				t = session.GetTorrent(magnetID)
+			} else {
+				return nil, fmt.Errorf("failed to add magnet: %w", err)
+			}
+		}
+	}
+
+	if t == nil {
+		return nil, fmt.Errorf("failed to add or find magnet torrent")
 	}
 
 	// Add external trackers in batches (limit to 200 max to prevent FD exhaustion)
@@ -733,9 +813,33 @@ func (f *MagnetFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 		return err
 	}
 
-	t, err := session.AddURI(task.URL, nil)
-	if err != nil {
-		return err
+	magnetID := magnetIDFromURI(task.URL)
+	t := session.GetTorrent(magnetID)
+	if t == nil {
+		t, err = session.AddURI(task.URL, &torrent.AddTorrentOptions{
+			ID: magnetID,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "already added") {
+				t = session.GetTorrent(magnetID)
+			} else {
+				return err
+			}
+		}
+	}
+
+	if t == nil {
+		return fmt.Errorf("failed to add or find magnet torrent for %s", task.URL)
+	}
+
+	// Add external trackers to boost discovery
+	extTrackers := getTrackers(ctx, f.Config)
+	if len(extTrackers) > 0 {
+		maxTrackers := 200
+		if len(extTrackers) > maxTrackers {
+			extTrackers = extTrackers[:maxTrackers]
+		}
+		addTrackersInBatches(ctx, t, extTrackers, f.Config.Verbose)
 	}
 
 	select {
@@ -755,10 +859,23 @@ func (f *MagnetFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 		task.OnProgress(int(lastCompleted))
 	}
 
+	notifyComplete := t.NotifyComplete()
+	notifyStop := t.NotifyStop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case err := <-notifyStop:
+			if err != nil {
+				return fmt.Errorf("torrent stopped with error: %w", err)
+			}
+			return fmt.Errorf("torrent stopped unexpectedly")
+		case <-notifyComplete:
+			if task.OnChunkComplete != nil {
+				task.OnChunkComplete(task.ChunkID, "")
+			}
+			return nil
 		case <-ticker.C:
 			stats := t.Stats()
 			
@@ -777,10 +894,10 @@ func (f *MagnetFetcher) Fetch(ctx context.Context, task *ChunkTask) error {
 						working++
 					}
 				}
-				log.Printf("[Magnet] Download stats... Peers: %d, Trackers: %d/%d working, Speed: %d KB/s, Progress: %d/%d", 
-					stats.Peers.Total, working, len(trackers), stats.Speed.Download/1024, stats.Bytes.Completed, task.Length)
+				log.Printf("[Magnet] Download stats... Peers: %d, Trackers: %d/%d working, Speed: %d KB/s, Progress: %d/%d (Pieces: %d/%d)", 
+					stats.Peers.Total, working, len(trackers), stats.Speed.Download/1024, stats.Bytes.Completed, task.Length, stats.Pieces.Have, stats.Pieces.Total)
 			}
-			if stats.Bytes.Completed >= task.Length {
+			if (task.Length > 0 && stats.Bytes.Completed >= task.Length) || (stats.Pieces.Total > 0 && stats.Pieces.Have == stats.Pieces.Total) {
 				if task.OnChunkComplete != nil {
 					task.OnChunkComplete(task.ChunkID, "")
 				}
