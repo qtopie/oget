@@ -41,6 +41,7 @@ func TestParseFileName_VideoStream(t *testing.T) {
 		{"https://example.com/live/playlist.m3u8", "playlist.mp4"},
 		{"https://example.com/live/STREAM.M3U8?token=123", "STREAM.mp4"},
 		{"https://example.com/media/manifest.mpd", "manifest.mp4"},
+		{"https://example.com/media/video.mp4.mpd", "video.mp4"},
 		{"https://example.com/archive.zip", "archive.zip"},
 	}
 

@@ -16,10 +16,18 @@ func parseFileName(uri string) string {
 			return name[:len(name)-8]
 		}
 		if strings.HasSuffix(lowerName, ".m3u8") {
-			return name[:len(name)-5] + ".mp4"
+			base := name[:len(name)-5]
+			if strings.HasSuffix(strings.ToLower(base), ".mp4") {
+				return base
+			}
+			return base + ".mp4"
 		}
 		if strings.HasSuffix(lowerName, ".mpd") {
-			return name[:len(name)-4] + ".mp4"
+			base := name[:len(name)-4]
+			if strings.HasSuffix(strings.ToLower(base), ".mp4") {
+				return base
+			}
+			return base + ".mp4"
 		}
 		return name
 	}
@@ -53,10 +61,18 @@ func parseFileName(uri string) string {
 		return fileName[:len(fileName)-8]
 	}
 	if strings.HasSuffix(lowerFileName, ".m3u8") {
-		return fileName[:len(fileName)-5] + ".mp4"
+		base := fileName[:len(fileName)-5]
+		if strings.HasSuffix(strings.ToLower(base), ".mp4") {
+			return base
+		}
+		return base + ".mp4"
 	}
 	if strings.HasSuffix(lowerFileName, ".mpd") {
-		return fileName[:len(fileName)-4] + ".mp4"
+		base := fileName[:len(fileName)-4]
+		if strings.HasSuffix(strings.ToLower(base), ".mp4") {
+			return base
+		}
+		return base + ".mp4"
 	}
 
 	return fileName
