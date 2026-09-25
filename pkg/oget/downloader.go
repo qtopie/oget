@@ -177,6 +177,28 @@ func (d *Downloader) spawnWorker(ctx context.Context, wg *sync.WaitGroup) {
 func (d *Downloader) PrepareAllTasks(ctx context.Context) ([]*ChunkTask, []*Requester, error) {
 	var allTasks []*ChunkTask
 	var requesters []*Requester
+
+	// Resolve any Hugging Face model resources to direct file download URLs
+	var resolvedURLs []string
+	for _, u := range d.URLs {
+		if IsHFResource(u) {
+			spec, err := ParseHFSpec(u)
+			if err != nil {
+				log.Printf("Warning: failed to parse HF resource %s: %v", u, err)
+				resolvedURLs = append(resolvedURLs, u)
+				continue
+			}
+			hfFiles, err := ResolveHFModelFiles(ctx, spec, d.Config)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to resolve HuggingFace model %s: %w", u, err)
+			}
+			resolvedURLs = append(resolvedURLs, hfFiles...)
+		} else {
+			resolvedURLs = append(resolvedURLs, u)
+		}
+	}
+	d.URLs = resolvedURLs
+
 	for _, u := range d.URLs {
 		req := NewRequester(u, d.Config)
 		req.Fetcher = d.Fetcher

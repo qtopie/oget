@@ -30,6 +30,8 @@ type Config struct {
 	DNS                string            `mapstructure:"dns"`                  // Custom DNS server for BT tracker/peer resolution (e.g. "8.8.8.8:53")
 	FFmpegPath         string            `mapstructure:"ffmpeg_path"`          // Custom path to ffmpeg binary
 	Headers            map[string]string `mapstructure:"headers"`              // Custom HTTP headers to pass to requests/ffmpeg
+	HFMirror           string            `mapstructure:"hf_mirror"`            // HuggingFace mirror endpoint (e.g. "https://hf-mirror.com")
+	HFToken            string            `mapstructure:"hf_token"`             // HuggingFace access token
 }
 
 // DefaultConfig returns a configuration with default values.
@@ -47,6 +49,8 @@ func DefaultConfig() *Config {
 		DNS:                "",
 		FFmpegPath:         "",
 		Headers:            make(map[string]string),
+		HFMirror:           "",
+		HFToken:            "",
 		TaskBatchSize:      100,
 		SeedingDuration:    30,
 		TrackerURLs: []string{

@@ -90,6 +90,9 @@ func (r *Requester) PrepareTasks(ctx context.Context) error {
 	if r.Config != nil && r.Config.OutputDir != "" && r.Config.OutputDir != "." {
 		fileName = filepath.Join(r.Config.OutputDir, fileName)
 	}
+	if dir := filepath.Dir(fileName); dir != "" && dir != "." {
+		_ = os.MkdirAll(dir, 0755)
+	}
 	stateFileName := r.getStateFileName(fileName)
 
 	var state *DownloadState

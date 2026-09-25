@@ -47,7 +47,17 @@ func main() {
 		return
 	}
 
+	var hfModel string
+	var hfMirror string
+	var hfToken string
+
+	var outputDir string
 	flag.StringVar(&fileName, "file", "", "name or path to save file (only for single URL)")
+	flag.StringVar(&outputDir, "dir", "", "target directory to save downloaded files")
+	flag.StringVar(&outputDir, "local-dir", "", "alias for -dir (huggingface-cli compatible)")
+	flag.StringVar(&hfModel, "hf", "", "Hugging Face model to download (e.g. lmstudio-community/Qwen3.5-4B-GGUF:Q4_K_M)")
+	flag.StringVar(&hfMirror, "hf-mirror", "", "custom Hugging Face mirror endpoint (e.g. https://hf-mirror.com)")
+	flag.StringVar(&hfToken, "hf-token", "", "Hugging Face access token (or set HF_TOKEN env)")
 	flag.IntVar(&concurrency, "concurrency", 0, "number of concurrent workers (default 8 with autotune, 32 without)")
 	flag.IntVar(&timeout, "timeout", 0, "timeout for network operations in seconds (default 30)")
 	flag.BoolVar(&verbose, "verbose", false, "enable verbose output for dynamic detection")
@@ -66,8 +76,12 @@ func main() {
 	}
 
 	args := flag.Args()
+	if hfModel != "" {
+		args = append(args, "hf:"+hfModel)
+	}
+
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <URL1> [URL2] ...\n       %s bt clean [directory]\n", os.Args[0], os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <URL1> [URL2] ...\n       %s -hf <repo>:<quant> [options]\n       %s bt clean [directory]\n", os.Args[0], os.Args[0], os.Args[0])
 		flag.PrintDefaults()
 		return
 	}
@@ -103,11 +117,19 @@ func main() {
 			}
 		}
 	}
-	if fileName != "" {
+	if outputDir != "" {
+		downloader.Config.OutputDir = outputDir
+	} else if fileName != "" {
 		downloader.Config.OutputDir = fileName
 	}
 	if timeout > 0 {
 		downloader.Config.Timeout = timeout
+	}
+	if hfMirror != "" {
+		downloader.Config.HFMirror = hfMirror
+	}
+	if hfToken != "" {
+		downloader.Config.HFToken = hfToken
 	}
 	downloader.Fetcher = oget.NewDispatchFetcher(downloader.Config)
 
